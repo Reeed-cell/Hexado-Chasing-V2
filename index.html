@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HEXADO CHASING — v2.0</title>
+<style>
+/* ═══════════════════════════════════════════════
+   RESET & BASE
+═══════════════════════════════════════════════ */
+*, *::before, *::after {
+  margin: 0; padding: 0; box-sizing: border-box;
+}
+
+:root {
+  --amber:        #ffc828;
+  --amber-dim:    rgba(255, 200, 40, 0.40);
+  --amber-ghost:  rgba(255, 200, 40, 0.12);
+  --white:        #ffffff;
+  --white-mid:    rgba(255, 255, 255, 0.32);
+  --white-dim:    rgba(255, 255, 255, 0.11);
+  --red-hot:      #ff2222;
+  --red-warn:     #ff8800;
+  --sky-dark:     #08090f;
+  --panel-bg:     rgba(4, 6, 14, 0.82);
+  --panel-border: rgba(255, 255, 255, 0.08);
+  --font-mono:    'Courier New', Courier, monospace;
+}
+
+html, body {
+  width: 100%; height: 100%;
+  overflow: hidden;
+  background: var(--sky-dark);
+  font-family: var(--font-mono);
+  color: var(--white);
+}
+
+/* ═══════════════════════════════════════════════
+   3-D CANVAS
+═══════════════════════════════════════════════ */
+#canvas {
+  display: block;
+  width: 100vw; height: 100vh;
+  position: fixed; inset: 0;
+}
+
+/* ═══════════════════════════════════════════════
+   LOADING SCREEN
+═══════════════════════════════════════════════ */
+#loader {
+  position: fixed; inset: 0;
+  background: var(--sky-dark);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+  transition: opacity 0.9s ease;
+}
+#loader.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.l-eyebrow {
+  color: var(--amber-dim);
+  font-size: 9px;
+  letter-spacing: 5px;
+  text-transform: uppercase;
+  margin-bottom: 18px;
+}
+
+.l-title {
+  color: var(--amber);
+  font-size: 48px;
+  font-weight: bold;
+  letter-spacing: 14px;
+  line-height: 1;
+  margin-bottom: 6px;
+  /* subtle flicker on load */
+  animation: titleFlicker 1.8s ease forwards;
+}
+@keyframes titleFlicker {
+  0%   { opacity: 0; }
+  30%  { opacity: 0.9; }
+  42%  { opacity: 0.4; }
+  55%  { opacity: 1; }
+  72%  { opacity: 0.7; }
+  100% { opacity: 1; }
+}
+
+.l-sub {
+  color: var(--amber-dim);
+  font-size: 9px;
+  letter-spacing: 4px;
+  text-transform: uppercase;
+  margin-bottom: 52px;
+}
+
+.l-bar-wrap {
+  position: relative;
+  width: 260px;
+  margin-bottom: 14px;
+}
+.l-bar-bg {
+  width: 100%;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.07);
+}
+.l-bar {
+  height: 100%;
+  width: 0%;
+  background: var(--amber);
+  transition: width 0.38s ease;
+  box-shadow: 0 0 8px var(--amber);
+}
+/* tick marks */
+.l-ticks {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 5px;
+}
+.l-ticks span {
+  width: 1px; height: 4px;
+  background: rgba(255, 200, 40, 0.18);
+}
+
+.l-status {
+  color: rgba(255, 255, 255, 0.28);
+  font-size: 9px;
+  letter-spacing: 2.5px;
+  text-transform: uppercase;
+  min-height: 14px;
+}
+
+/* corner decoration */
+.l-corner {
+  position: absolute;
+  width: 22px; height: 22px;
+  border-color: rgba(255, 200, 40, 0.22);
+  border-style: solid;
+}
+.l-corner.tl { top: 28px; left: 28px; border-width: 1px 0 0 1px; }
+.l-corner.tr { top: 28px; right: 28px; border-width: 1px 1px 0 0; }
+.l-corner.bl { bottom: 28px; left: 28px; border-width: 0 0 1px 1px; }
+.l-corner.br { bottom: 28px; right: 28px; border-width: 0 1px 1px 0; }
+
+/* ═══════════════════════════════════════════════
+   HUD ROOT
+═══════════════════════════════════════════════ */
+#hud {
+  position: fixed; inset: 0;
+  pointer-events: none;
+  z-index: 10;
+}
+
+/* ── Scanline grain overlay (atmospheric) ── */
+#hud::before {
+  content: '';
+  position: absolute; inset: 0;
+  background-image: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0,0,0,0.03) 2px,
+    rgba(0,0,0,0.03) 4px
+  );
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ═══════════════════════════════════════════════
+   TITLE BAR  (top-center)
+═══════════════════════════════════════════════ */
+#hud-title-bar {
+  position: absolute;
+  top: 16px; left: 50%;
+  transform: translateX(-50%);
+  background: var(--panel-bg);
+  border: 1px solid var(--amber-ghost);
+  border-radius: 2px;
+  padding: 8px 32px 7px;
+  text-align: center;
+  user-select: none;
+  white-space: nowrap;
+}
+#hud-title-bar .game-title {
+  color: var(--amber);
+  font-size: 13px;
+  font-weight: bold;
+  letter-spacing: 6px;
+  margin-bottom: 3px;
+}
+#hud-title-bar .game-sub {
+  color: var(--amber-dim);
+  font-size: 8px;
+  letter-spacing: 2.5px;
+  text-transform: uppercase;
+}
+
+/* ═══════════════════════════════════════════════
+   MODE LABEL  (below title bar)
+═══════════════════════════════════════════════ */
+#mode-label {
+  position: absolute;
+  top: 80px; left: 50%;
+  transform: translateX(-50%);
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 2px;
+  padding: 4px 16px;
+  color: var(--white-mid);
+  font-size: 8px;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  user-select: none;
+  transition: color 0.3s ease;
+}
+
+/* ═══════════════════════════════════════════════
+   EF INTENSITY BAR  (bottom-center, above stats)
+═══════════════════════════════════════════════ */
+#ef-wrap {
+  position: absolute;
+  bottom: 116px; left: 50%;
+  transform: translateX(-50%);
+  width: 310px;
+  text-align: center;
+  user-select: none;
+}
+.ef-heading {
+  color: rgba(255, 255, 255, 0.28);
+  font-size: 7px;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+/* segmented EF bar */
+#ef-segments {
+  display: flex;
+  gap: 2px;
+  height: 5px;
+  margin-bottom: 5px;
+}
+.ef-seg {
+  flex: 1;
+  background: rgba(255,255,255,0.06);
+  border-radius: 1px;
+  transition: background 0.4s ease, box-shadow 0.4s ease;
+}
+.ef-seg.lit-0 { background: #00cc44; box-shadow: 0 0 5px #00cc44; }
+.ef-seg.lit-1 { background: #88cc00; box-shadow: 0 0 5px #88cc00; }
+.ef-seg.lit-2 { background: #ffcc00; box-shadow: 0 0 5px #ffcc00; }
+.ef-seg.lit-3 { background: #ff8800; box-shadow: 0 0 5px #ff8800; }
+.ef-seg.lit-4 { background: #ff4400; box-shadow: 0 0 5px #ff4400; }
+.ef-seg.lit-5 { background: #cc0000; box-shadow: 0 0 5px #cc0000; }
+
+/* hidden fill bar kept for HUD.js compatibility */
+#ef-track { display: none; }
+#ef-fill  { display: none; }
+
+#ef-label {
+  color: var(--amber);
+  font-size: 10px;
+  letter-spacing: 2.5px;
+  transition: color 0.3s ease;
+}
+
+/* ═══════════════════════════════════════════════
+   STAT BOXES  (bottom-center)
+═══════════════════════════════════════════════ */
+#hud-stats {
+  position: absolute;
+  bottom: 22px; left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 8px;
+}
+.sbox {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 2px;
+  padding: 10px 18px 8px;
+  text-align: center;
+  min-width: 88px;
+  position: relative;
+}
+/* top-left notch */
+.sbox::before {
+  content: '';
+  position: absolute;
+  top: -1px; left: -1px;
+  width: 6px; height: 6px;
+  background: var(--sky-dark);
+  clip-path: polygon(0 0, 100% 0, 0 100%);
+}
+.slabel {
+  color: rgba(255,255,255,0.28);
+  font-size: 7px;
+  letter-spacing: 2.5px;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+.sval {
+  color: var(--white);
+  font-size: 24px;
+  font-weight: bold;
+  line-height: 1;
+  letter-spacing: -0.5px;
+}
+.sunit {
+  color: rgba(255,255,255,0.22);
+  font-size: 7px;
+  letter-spacing: 1.5px;
+  margin-top: 2px;
+}
+
+/* ═══════════════════════════════════════════════
+   MINIMAP  (top-right)
+═══════════════════════════════════════════════ */
+#minimap {
+  position: absolute;
+  top: 76px; right: 20px;
+  width: 112px; height: 112px;
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 2px;
+  overflow: hidden;
+}
+/* compass label */
+#minimap::after {
+  content: 'MAP';
+  position: absolute;
+  bottom: 4px; right: 5px;
+  font-size: 6px;
+  letter-spacing: 1.5px;
+  color: rgba(255,255,255,0.16);
+  pointer-events: none;
+}
+
+/* ═══════════════════════════════════════════════
+   CONTROLS HINT  (bottom-right)
+═══════════════════════════════════════════════ */
+#hint {
+  position: absolute;
+  bottom: 22px; right: 20px;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 2px;
+  padding: 11px 15px;
+  font-size: 8px;
+  letter-spacing: 0.8px;
+  line-height: 2.1;
+  user-select: none;
+}
+.hint-key {
+  color: var(--amber);
+  display: inline-block;
+  min-width: 56px;
+}
+.hint-desc {
+  color: rgba(255,255,255,0.28);
+}
+.hint-divider {
+  height: 1px;
+  background: var(--panel-border);
+  margin: 6px -15px;
+}
+
+/* ═══════════════════════════════════════════════
+   PROXIMITY / DANGER ALERT  (center screen)
+═══════════════════════════════════════════════ */
+#alert {
+  position: absolute;
+  top: 44%; left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 30px;
+  font-weight: bold;
+  letter-spacing: 8px;
+  text-transform: uppercase;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  pointer-events: none;
+  white-space: nowrap;
+  color: var(--red-hot);
+  text-shadow: 0 0 28px var(--red-hot);
+}
+
+/* ═══════════════════════════════════════════════
+   ENTER / EXIT VEHICLE PROMPT  (lower-center)
+═══════════════════════════════════════════════ */
+#enter-prompt {
+  position: absolute;
+  bottom: 178px; left: 50%;
+  transform: translateX(-50%);
+  background: var(--panel-bg);
+  border: 1px solid rgba(255, 200, 40, 0.30);
+  border-radius: 2px;
+  padding: 8px 24px;
+  color: var(--amber);
+  font-size: 10px;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.22s ease;
+  user-select: none;
+}
+
+/* ═══════════════════════════════════════════════
+   PERFORMANCE INDICATOR  (top-left, tiny)
+═══════════════════════════════════════════════ */
+#perf-label {
+  position: absolute;
+  top: 20px; left: 20px;
+  color: rgba(255,255,255,0.16);
+  font-size: 7px;
+  letter-spacing: 1.5px;
+  user-select: none;
+}
+</style>
+</head>
+<body>
+
+<!-- ═══════════ LOADING SCREEN ═══════════ -->
+<div id="loader">
+  <div class="l-corner tl"></div>
+  <div class="l-corner tr"></div>
+  <div class="l-corner bl"></div>
+  <div class="l-corner br"></div>
+
+  <div class="l-eyebrow">Oklahoma Storm Research · Field Unit 7</div>
+  <div class="l-title">HEXADO</div>
+  <div class="l-sub">Chasing Engine &nbsp;·&nbsp; v2.0</div>
+
+  <div class="l-bar-wrap">
+    <div class="l-bar-bg">
+      <div class="l-bar" id="load-bar"></div>
+    </div>
+    <div class="l-ticks">
+      <span></span><span></span><span></span><span></span><span></span>
+      <span></span><span></span><span></span><span></span><span></span>
+    </div>
+  </div>
+  <div class="l-status" id="load-status">Initialising systems…</div>
+</div>
+
+<!-- ═══════════ 3D CANVAS ═══════════ -->
+<canvas id="canvas"></canvas>
+
+<!-- ═══════════ HUD ═══════════ -->
+<div id="hud">
+
+  <!-- Performance indicator -->
+  <div id="perf-label">HexadoEngine v2.0</div>
+
+  <!-- Title bar -->
+  <div id="hud-title-bar">
+    <div class="game-title">HEXADO CHASING</div>
+    <div class="game-sub">All geometry procedural &nbsp;·&nbsp; Three.js r128 &nbsp;·&nbsp; v2.0</div>
+  </div>
+
+  <!-- Mode label -->
+  <div id="mode-label">🚗 DRIVING</div>
+
+  <!-- EF intensity bar -->
+  <div id="ef-wrap">
+    <div class="ef-heading">Storm Intensity</div>
+
+    <!-- Segmented EF display (6 segments = EF0–EF5) -->
+    <div id="ef-segments">
+      <div class="ef-seg" id="ef-seg-0"></div>
+      <div class="ef-seg" id="ef-seg-1"></div>
+      <div class="ef-seg" id="ef-seg-2"></div>
+      <div class="ef-seg" id="ef-seg-3"></div>
+      <div class="ef-seg" id="ef-seg-4"></div>
+      <div class="ef-seg" id="ef-seg-5"></div>
+    </div>
+
+    <!-- Hidden compatibility elements for HUD.js -->
+    <div id="ef-track"><div id="ef-fill"></div></div>
+
+    <div id="ef-label">Clear skies</div>
+  </div>
+
+  <!-- Stat boxes -->
+  <div id="hud-stats">
+    <div class="sbox">
+      <div class="slabel">Speed</div>
+      <div class="sval" id="s-speed">0</div>
+      <div class="sunit">km/h</div>
+    </div>
+    <div class="sbox">
+      <div class="slabel">Distance</div>
+      <div class="sval" id="s-dist">0</div>
+      <div class="sunit">m</div>
+    </div>
+    <div class="sbox">
+      <div class="slabel">Proximity</div>
+      <div class="sval" id="s-prox">---</div>
+      <div class="sunit">m</div>
+    </div>
+    <div class="sbox">
+      <div class="slabel">Score</div>
+      <div class="sval" id="s-score">0</div>
+      <div class="sunit">pts</div>
+    </div>
+  </div>
+
+  <!-- Controls hint -->
+  <div id="hint">
+    <div><span class="hint-key">W / ↑</span><span class="hint-desc">Accelerate / Walk fwd</span></div>
+    <div><span class="hint-key">S / ↓</span><span class="hint-desc">Brake · Reverse / Back</span></div>
+    <div><span class="hint-key">A / ←</span><span class="hint-desc">Turn left</span></div>
+    <div><span class="hint-key">D / →</span><span class="hint-desc">Turn right</span></div>
+    <div class="hint-divider"></div>
+    <div><span class="hint-key" style="color:var(--amber)">E</span><span class="hint-desc" style="color:rgba(255,200,40,0.45)">Enter / Exit vehicle</span></div>
+  </div>
+
+  <!-- Minimap -->
+  <div id="minimap">
+    <canvas id="mm-canvas" width="112" height="112"></canvas>
+  </div>
+
+  <!-- Proximity / danger alert -->
+  <div id="alert"></div>
+
+  <!-- Enter / exit vehicle prompt -->
+  <div id="enter-prompt">[E] Enter vehicle</div>
+
+</div><!-- /#hud -->
+
+<!-- ═══════════ SCRIPTS — load order is critical ═══════════ -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+<!-- Foundation -->
+<script src="eventbus.js"></script>
+<script src="main-math.js"></script>
+<script src="3DEngine.js"></script>
+
+<!-- Systems -->
+<script src="physics.js"></script>
+<script src="weather.js"></script>
+<script src="tornado.js"></script>
+<script src="Characters.js"></script>
+
+<!-- Rendering -->
+<script src="Render.js"></script>
+<script src="HUD.js"></script>
+
+<!-- Optimizer -->
+<script src="performance-optimizer.js"></script>
+
+<!-- Orchestration (boots everything) -->
+<script src="main.js"></script>
+
+</body>
+</html>
