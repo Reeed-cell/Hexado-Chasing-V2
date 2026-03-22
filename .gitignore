@@ -1,0 +1,13 @@
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Standard IDE folders
+.vscode/
+.idea/
+
+# Local logs
+*.log
+
+# Vercel metadata
+.vercels
