@@ -401,33 +401,34 @@ HE.EnvironmentGen = class {
       wall.receiveShadow = true;
       group.add(wall);
 
-      /* ── Pitched roof (two triangular prisms using BoxGeometry + rotation) ──
-         Simplest approach: a wide flat box tilted slightly to form a ridge.
-         For proper pitched look: use two BoxGeometry halves angled inward.  */
+      /* ── Pitched gable roof ──
+         Each slope panel goes from the central ridge down to one eave.
+         Ridge: y = gy + bh + ridgeH,  z = bz
+         Eave:  y = gy + bh,           z = bz ± roofHalfD
+         Correct geometry: box depth = true hypotenuse of (ridgeH, roofHalfD).
+         Pivot is the box centre (midpoint between ridge and eave), so:
+           +Z end of each rotated box → ridge,  -Z / +Z end → eave.     */
       var roofW     = bw + 0.4;
-      var roofHalfD = bd * 0.5 + 0.3;
+      var roofHalfD = bd * 0.5 + 0.3;       // half-depth including eave overhang
       var ridgeH    = _ENV.BARN_ROOF_H;
-
-      /* Left slope */
-      var slopeGeo  = new THREE.BoxGeometry(roofW, 0.22, roofHalfD * 1.12);
+      /* True slope length (hypotenuse) — not an approximation */
+      var slopeLen  = Math.sqrt(ridgeH * ridgeH + roofHalfD * roofHalfD);
       var angle     = Math.atan2(ridgeH, roofHalfD);
 
+      var slopeGeo  = new THREE.BoxGeometry(roofW, 0.22, slopeLen);
+
+      /* Left slope (toward -Z).  Centre = midpoint of ridge↔left-eave. */
       var slopeL = new THREE.Mesh(slopeGeo, _MAT.barnRoof);
       slopeL.rotation.x =  angle;
-      slopeL.position.set(
-        bx,
-        gy + bh + ridgeH * 0.5 - 0.1,
-        bz - roofHalfD * 0.5
-      );
+      slopeL.position.set(bx, gy + bh + ridgeH * 0.5, bz - roofHalfD * 0.5);
+      slopeL.castShadow = true;
       group.add(slopeL);
 
+      /* Right slope (toward +Z). */
       var slopeR = new THREE.Mesh(slopeGeo, _MAT.barnRoof);
       slopeR.rotation.x = -angle;
-      slopeR.position.set(
-        bx,
-        gy + bh + ridgeH * 0.5 - 0.1,
-        bz + roofHalfD * 0.5
-      );
+      slopeR.position.set(bx, gy + bh + ridgeH * 0.5, bz + roofHalfD * 0.5);
+      slopeR.castShadow = true;
       group.add(slopeR);
 
       /* ── Silo alongside barn ── */

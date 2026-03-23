@@ -406,7 +406,9 @@ class HexadoEngine {
 
     /* ── Position + heading ── */
     this.vehicleMesh.position.copy(pos);
-    this.vehicleMesh.rotation.y = heading;
+    /* +PI: vehicle model front is at -Z, but heading 0 = +Z world direction.
+       Walker.js uses the same offset (Characters.js line ~1266). */
+    this.vehicleMesh.rotation.y = heading + Math.PI;
 
     /* ── Wheel spin ── */
     var speedMs        = kmh / 3.6;

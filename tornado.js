@@ -203,48 +203,85 @@ HE.Tornado = class {
   }
 
   /* ── Main funnel — stacked torus rings ───────────────────────────────── */
+  /* ── Main funnel — custom tube geometry ─────────────────────────────── */
   _buildFunnel() {
     this._funnelGroup = new THREE.Group();
     this._funnelGroup.name = 'funnel';
     this._group.add(this._funnelGroup);
 
-    this._rings    = [];  // THREE.Mesh[]
-    this._ringMats = [];  // THREE.MeshBasicMaterial[] (one per ring for opacity gradient)
+    /* Build the funnel as a seamless tube surface.
+       Width at each height comes from funnelRadius(1 - normH) so that:
+         y = 0 (ground)          → narrow core contact
+         y = FUNNEL_HEIGHT (cloud)→ wide cloud base
+       This gives the classic "wide at top, rope at ground" silhouette.
 
-    for (var i = 0; i < _TORN.RING_COUNT; i++) {
-      var normH = i / (_TORN.RING_COUNT - 1);  // 0 = ground, 1 = cloud base
+       The geometry is built at full intensity (rc = RC_MAX = 18).
+       update() scales the funnelGroup XZ with intensity so the funnel
+       widens as the storm strengthens — no per-frame GC.             */
+    var VSEG  = 16;   // height divisions — smooth Rankine curve
+    var RSEG  = 20;   // radial divisions — smooth circumference
+    var RC_FULL = 18.0; // VortexMath.RC_MAX hard-coded to avoid setIntensity side-effects
 
-      /* Per-ring material: rings near ground are slightly more opaque */
-      var mat = new THREE.MeshBasicMaterial({
-        color:       _TORN.COL_FORMING,
-        transparent: true,
-        opacity:     _TORN.OPACITY_FORMING * (0.65 + 0.35 * (1 - normH)),
-        depthWrite:  false,
-        side:        THREE.DoubleSide,
-        wireframe:   false
-      });
+    var vCount  = (VSEG + 1) * (RSEG + 1);
+    var pos     = new Float32Array(vCount * 3);
+    var norm    = new Float32Array(vCount * 3);
+    var indices = [];
 
-      /* Radius driven by VortexMath.funnelRadius() — syncs with physics */
-      var radius = this._vortex.funnelRadius(normH);
+    for (var ri = 0; ri <= VSEG; ri++) {
+      var normH = ri / VSEG;               // 0 = ground, 1 = cloud base
+      /* Invert for funnelRadius so ground = narrow, cloud = wide */
+      var r = RC_FULL * (0.32 + 2.6 * Math.pow(normH, 2.2));
+      var h = normH * _TORN.FUNNEL_HEIGHT;
 
-      var geo = new THREE.TorusGeometry(
-        radius,          // torus radius
-        _TORN.RING_TUBE_R, // tube radius
-        6,               // tubular segments (low = hex cross-section look)
-        _TORN.RING_SEGS  // radial segments
-      );
-
-      var ring = new THREE.Mesh(geo, mat);
-      ring.name = 'ring_' + i;
-      ring.position.y = normH * _TORN.FUNNEL_HEIGHT;
-
-      // Slight random phase offset per ring so they're not perfectly aligned
-      ring.rotation.y = (i / _TORN.RING_COUNT) * Math.PI * 2;
-
-      this._funnelGroup.add(ring);
-      this._rings.push(ring);
-      this._ringMats.push(mat);
+      for (var si = 0; si <= RSEG; si++) {
+        var ang = (si / RSEG) * Math.PI * 2;
+        var idx = (ri * (RSEG + 1) + si) * 3;
+        var cx  = Math.cos(ang);
+        var cz  = Math.sin(ang);
+        pos [idx    ] = cx * r;
+        pos [idx + 1] = h;
+        pos [idx + 2] = cz * r;
+        norm[idx    ] = cx;
+        norm[idx + 1] = 0;
+        norm[idx + 2] = cz;
+      }
     }
+
+    for (var ri = 0; ri < VSEG; ri++) {
+      for (var si = 0; si < RSEG; si++) {
+        var a = ri * (RSEG + 1) + si;
+        var b = a + 1;
+        var c = (ri + 1) * (RSEG + 1) + si;
+        var d = c + 1;
+        indices.push(a, c, b, b, c, d);
+      }
+    }
+
+    var geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos,  3));
+    geo.setAttribute('normal',   new THREE.BufferAttribute(norm, 3));
+    geo.setIndex(new THREE.BufferAttribute(new Uint32Array(indices), 1));
+
+    var mat = new THREE.MeshBasicMaterial({
+      color:       _TORN.COL_FORMING,
+      transparent: true,
+      opacity:     _TORN.OPACITY_FORMING,
+      depthWrite:  false,
+      side:        THREE.DoubleSide
+    });
+
+    this._funnelMesh = new THREE.Mesh(geo, mat);
+    this._funnelMesh.name = 'funnelTube';
+    this._funnelGroup.add(this._funnelMesh);
+
+    this._funnelGeo = geo;
+    this._funnelMat = mat;
+
+    /* Keep empty arrays so any code that iterates _rings silently no-ops */
+    this._rings    = [];
+    this._ringMats = [];
+
+    console.log('[Tornado] Funnel tube ready — ' + VSEG + 'v × ' + RSEG + 'r segments.');
   }
 
   /* ── Debris point cloud ──────────────────────────────────────────────── */
@@ -319,8 +356,8 @@ HE.Tornado = class {
     this._rotY -= rotRate * dt;  // negative = CCW from above
     this._funnelGroup.rotation.y = this._rotY;
 
-    /* ── 2. Rebuild ring radii ── */
-    this._updateRings();
+    /* ── 2. Funnel shape + scale ── */
+    this._updateFunnelMesh();
 
     /* ── 3. Opacity / colour transitions ── */
     this._updateMaterials();
@@ -338,47 +375,18 @@ HE.Tornado = class {
   }
 
   /* ─────────────────────────────────────────────────────────────────────
-     _updateRings()
-     Resize each ring's torus radius to match current funnel shape.
-     We rebuild geometry in-place — dispose old geo and create new one.
-     This is cheap because RING_COUNT is small (4-10).
+     _updateFunnelMesh()
+     Scales the funnel group XZ with intensity so the funnel widens
+     as the storm strengthens. The tube surface was built at full intensity
+     (RC_MAX = 18), so a scale of `intensity` gives the correct width.
+     A minimum scale of 0.04 keeps the rope visible even while forming.
+     Counter-wobble on X vs Z gives a subtle oval distortion.
   ───────────────────────────────────────────────────────────────────── */
-  _updateRings() {
-    var count = _TORN.LOD_RING_COUNTS[this._lodLevel];
-
-    for (var i = 0; i < _TORN.RING_COUNT; i++) {
-      var ring = this._rings[i];
-      if (!ring) continue;
-
-      /* Hide rings beyond current LOD count */
-      if (i >= count) {
-        ring.visible = false;
-        continue;
-      }
-      ring.visible = true;
-
-      var normH  = i / (_TORN.RING_COUNT - 1);
-      var radius = this._vortex.funnelRadius(normH);
-
-      /* Only rebuild if radius changed significantly (avoids GC thrash) */
-      var currentR = ring.geometry.parameters
-        ? ring.geometry.parameters.radius
-        : -1;
-
-      if (Math.abs(currentR - radius) > 0.25) {
-        ring.geometry.dispose();
-        ring.geometry = new THREE.TorusGeometry(
-          radius,
-          _TORN.RING_TUBE_R,
-          6,
-          _TORN.RING_SEGS
-        );
-      }
-
-      /* Slight per-ring oscillation for organic turbulence */
-      var wobble = 1 + 0.06 * Math.sin(this._time * 2.3 + i * 0.9);
-      ring.scale.set(wobble, 1, wobble);
-    }
+  _updateFunnelMesh() {
+    var s = HE.MathUtils.lerp(0.04, 1.0, this._intensity);
+    /* Organic asymmetric wobble — X grows when Z shrinks and vice versa */
+    var wob = 1.0 + 0.05 * Math.sin(this._time * 2.4) * this._intensity;
+    this._funnelGroup.scale.set(s * wob, 1.0, s / wob);
   }
 
   /* ─────────────────────────────────────────────────────────────────────
@@ -387,7 +395,6 @@ HE.Tornado = class {
      Rings near the ground are always slightly darker.
   ───────────────────────────────────────────────────────────────────── */
   _updateMaterials() {
-    /* Target colour: lerp between forming-white and active-dark based on intensity */
     var targetHex = this._lerpColor(
       _TORN.COL_FORMING, _TORN.COL_ACTIVE, this._intensity
     );
@@ -397,24 +404,21 @@ HE.Tornado = class {
 
     var col = new THREE.Color(targetHex);
 
-    for (var i = 0; i < this._ringMats.length; i++) {
-      var mat   = this._ringMats[i];
-      var normH = i / (this._ringMats.length - 1);
-
-      /* Ground rings are always ~20% more opaque */
-      mat.opacity = targetOpacity * (0.65 + 0.35 * (1 - normH));
-      mat.color.set(col);
-      mat.needsUpdate = true;
+    /* ── Main funnel tube ── */
+    if (this._funnelMat) {
+      this._funnelMat.opacity = targetOpacity;
+      this._funnelMat.color.set(col);
+      this._funnelMat.needsUpdate = true;
     }
 
-    /* Skirt opacity */
+    /* ── Skirt opacity ── */
     if (this._skirtMat) {
       this._skirtMat.opacity = HE.MathUtils.lerp(0.10, 0.30, this._intensity);
       this._skirtMat.color.set(col);
       this._skirtMat.needsUpdate = true;
     }
 
-    /* Debris opacity */
+    /* ── Debris opacity ── */
     if (this._debrisMat) {
       this._debrisMat.opacity = HE.MathUtils.lerp(0.3, 0.88, this._intensity);
       this._debrisMat.needsUpdate = true;
@@ -539,13 +543,9 @@ HE.Tornado = class {
   ═══════════════════════════════════════════════════════════════════════ */
 
   dispose() {
-    /* Dispose ring geometries */
-    for (var i = 0; i < this._rings.length; i++) {
-      this._rings[i].geometry.dispose();
-    }
-    for (var i = 0; i < this._ringMats.length; i++) {
-      this._ringMats[i].dispose();
-    }
+    /* Dispose funnel tube geometry + material */
+    if (this._funnelGeo)  this._funnelGeo.dispose();
+    if (this._funnelMat)  this._funnelMat.dispose();
 
     /* Dispose skirt */
     if (this._skirt) {
