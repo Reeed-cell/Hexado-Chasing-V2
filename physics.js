@@ -421,7 +421,30 @@ HE.PhysicsEngine = class {
   get lifted() { return this._lifted; }
 
   /** Current Y position relative to ground (0 = on ground) */
-  get liftHeight() { return this._pos.y - 0.85; }
+  get liftHeight() { return this._pos.y - _PHY.VEHICLE_CLEARANCE; }
+
+  /* ═══════════════════════════════════════════════════════════════════════
+     applyPositionImpulse(dx, dz)
+     Applies a direct world-space XZ position nudge this frame.
+     Used by main.js for vortex suction so it never touches _pos directly.
+     The terrain-snap step in update() will correct Y automatically.
+  ═══════════════════════════════════════════════════════════════════════ */
+  applyPositionImpulse(dx, dz) {
+    this._pos.x += dx;
+    this._pos.z += dz;
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════════
+     respawn(x, y, z)
+     Teleports the vehicle to a world position and resets all motion state.
+     Called by main.js._respawnPlayer() — no private fields needed outside.
+  ═══════════════════════════════════════════════════════════════════════ */
+  respawn(x, y, z) {
+    this._pos.set(x, y, z);
+    this._speed   = 0;
+    this._heading = 0;
+    this.cancelLift();
+  }
 
   /* Cancel lift and return to ground mode — called by main.js on respawn */
   cancelLift() {

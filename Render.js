@@ -416,9 +416,16 @@ HE.Renderer = class {
     this._atmoT  = 0;
 
     /* Temporary colour objects reused every frame — avoids GC */
-    this._tmpSkyCol = new THREE.Color();
-    this._tmpFogCol = new THREE.Color();
-    this._tmpSunCol = new THREE.Color();
+    this._tmpSkyCol   = new THREE.Color();
+    this._tmpFogCol   = new THREE.Color();
+    this._tmpSunCol   = new THREE.Color();
+    /* Pre-allocated cloud tint colours — reused in _driftClouds() */
+    this._tmpCloudA   = new THREE.Color(0xdde8ef);   // clear-day white
+    this._tmpCloudB   = new THREE.Color(0x5a5a5a);   // storm anvil dark
+
+    /* Bound listener refs stored so dispose() can cleanly off() them */
+    this._onStormUpdateBound = this._onStormUpdate.bind(this);
+    this._onPerfAdjustBound  = this._onPerfAdjust.bind(this);
 
     /* Performance level: set via PERFORMANCE_ADJUST event */
     this._lodLevel = 0;
@@ -437,9 +444,21 @@ HE.Renderer = class {
        5. EventBus subscriptions       → STORM_UPDATE, PERFORMANCE_ADJUST
   ═══════════════════════════════════════════════════════════════════════ */
 
-  async init() {
+  async init(onProgress) {
+
+    /* Internal helper: forwards progress to caller with a phase label */
+    var self = this;
+    function fwd(phase, rangeLo, rangeHi) {
+      return function(pct, detail) {
+        if (typeof onProgress === 'function') {
+          var mapped = Math.round(rangeLo + (pct / 100) * (rangeHi - rangeLo));
+          onProgress(mapped, phase, detail);
+        }
+      };
+    }
 
     /* ── 1. Boot 3D engine ── */
+    if (typeof onProgress === 'function') onProgress(2, 'Booting 3D engine…', 'WebGLRenderer · ShadowMap · Tone mapping');
     this._engine = new HE.Engine();
     var core = this._engine.init(this._canvas);
 
@@ -449,12 +468,14 @@ HE.Renderer = class {
 
     console.log('[Renderer] 3DEngine booted.');
 
-    /* ── 2. Generate terrain ── */
-    HE.TerrainGen.generate(this._scene);
+    /* ── 2. Generate terrain — reports real per-chunk progress ── */
+    if (typeof onProgress === 'function') onProgress(5, 'Generating terrain…', 'Allocating ' + (121 * 121).toLocaleString() + ' vertices…');
+    await HE.TerrainGen.generate(this._scene, fwd('Generating terrain…', 5, 55));
     console.log('[Renderer] Terrain generated.');
 
-    /* ── 3. Build environment props ── */
-    var env = HE.EnvironmentGen.build(this._scene);
+    /* ── 3. Build environment props — reports real per-section progress ── */
+    if (typeof onProgress === 'function') onProgress(56, 'Building environment…', 'Initialising prop groups…');
+    var env = await HE.EnvironmentGen.build(this._scene, fwd('Building environment…', 56, 88));
 
     /* EnvironmentGen.build() returns { props, clouds }.
        Store clouds array for per-frame drift in update(). */
@@ -462,17 +483,18 @@ HE.Renderer = class {
       this._clouds = env.clouds;
       console.log('[Renderer] Environment built — ' + this._clouds.length + ' cloud meshes.');
     } else {
-      /* If environment.js returns nothing or different shape, handle gracefully */
       this._clouds = [];
       console.warn('[Renderer] EnvironmentGen.build() did not return expected { props, clouds } shape.');
     }
 
     /* ── 4. Particle engine ── */
+    if (typeof onProgress === 'function') onProgress(90, 'Spawning particle systems…', 'Rain · Ambient debris');
     this._particles = new HE.ParticleEngine(this._scene);
 
     /* ── 5. EventBus wiring ── */
-    this._bus.on('STORM_UPDATE',      this._onStormUpdate.bind(this));
-    this._bus.on('PERFORMANCE_ADJUST', this._onPerfAdjust.bind(this));
+    if (typeof onProgress === 'function') onProgress(96, 'Wiring event bus…', 'STORM_UPDATE · PERFORMANCE_ADJUST');
+    this._bus.on('STORM_UPDATE',      this._onStormUpdateBound);
+    this._bus.on('PERFORMANCE_ADJUST', this._onPerfAdjustBound);
 
     console.log('[Renderer] Init complete.');
   }
@@ -494,12 +516,13 @@ HE.Renderer = class {
     this._driftClouds(dt);
 
     /* ── 2. Smooth atmosphere tracking ──
-       _atmoT lerps toward intensity at ATMO_LERP rate.
-       This means the sky transition lags slightly behind the storm,
-       which feels more natural than instant snapping. */
+       Exponential decay: k = 1 - (1 - ATMO_LERP)^(dt×60)
+       This is frame-rate independent — behaviour is identical at 30fps,
+       60fps, and 120fps. The old linear scale (× dt×60) was approximate. */
     var targetAtmo   = HE.MathUtils.clamp(intensity, 0, 1);
-    this._atmoT += (targetAtmo - this._atmoT) * _R.ATMO_LERP * (dt * 60);
-    this._atmoT  = HE.MathUtils.clamp(this._atmoT, 0, 1);
+    var atmoK        = 1 - Math.pow(1 - _R.ATMO_LERP, dt * 60);
+    this._atmoT     += (targetAtmo - this._atmoT) * atmoK;
+    this._atmoT      = HE.MathUtils.clamp(this._atmoT, 0, 1);
 
     /* ── 3. Sky, fog, sun ── */
     this._updateAtmosphere(this._atmoT);
@@ -544,8 +567,8 @@ HE.Renderer = class {
       /* Storm cloud darkening: lerp cloud colour toward storm-grey */
       if (c.material) {
         c.material.color.lerpColors(
-          new THREE.Color(0xdde8ef),   // clear-day white cloud
-          new THREE.Color(0x5a5a5a),   // storm anvil dark
+          this._tmpCloudA,   // clear-day white cloud (pre-allocated)
+          this._tmpCloudB,   // storm anvil dark     (pre-allocated)
           this._atmoT
         );
         /* Clouds also drop slightly as storm intensifies */
@@ -668,8 +691,8 @@ HE.Renderer = class {
   ═══════════════════════════════════════════════════════════════════════ */
 
   dispose() {
-    this._bus.off('STORM_UPDATE',       this._onStormUpdate.bind(this));
-    this._bus.off('PERFORMANCE_ADJUST', this._onPerfAdjust.bind(this));
+    this._bus.off('STORM_UPDATE',       this._onStormUpdateBound);
+    this._bus.off('PERFORMANCE_ADJUST', this._onPerfAdjustBound);
 
     if (this._particles) this._particles.dispose();
     if (this._engine)    this._engine.dispose();

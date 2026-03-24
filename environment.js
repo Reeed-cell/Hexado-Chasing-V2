@@ -220,7 +220,7 @@ HE.EnvironmentGen = class {
      Entry point — called once by Render.js.
      Returns { props, clouds } as per the module contract.
   ═══════════════════════════════════════════════════════════════════════ */
-  static build(scene) {
+  static async build(scene, onProgress) {
     _initMaterials();
 
     var t0 = performance.now();
@@ -232,17 +232,40 @@ HE.EnvironmentGen = class {
     /* Clouds are returned separately so Render.js can animate them */
     var clouds = [];
 
-    /* ── Build each prop category ── */
+    /* Helper: report progress and yield one frame to let the browser paint */
+    async function step(pct, label) {
+      if (typeof onProgress === 'function') onProgress(pct, label);
+      await new Promise(function(resolve) { setTimeout(resolve, 0); });
+    }
+
+    /* ── Build each prop category — yield between each so bar updates ── */
+    await step(10, 'Painting road markings…');
     HE.EnvironmentGen._buildRoadMarkings(props);
+
+    await step(25, 'Planting power poles…');
     HE.EnvironmentGen._buildPowerPoles(props);
+
+    await step(45, 'Building farm structures…');
     HE.EnvironmentGen._buildFarms(props);
+
+    await step(62, 'Growing tree clusters…');
     HE.EnvironmentGen._buildTrees(props);
+
+    await step(74, 'Scattering hay bales…');
     HE.EnvironmentGen._buildHayBales(props);
+
+    await step(83, 'Running fence lines…');
     HE.EnvironmentGen._buildFences(props);
+
+    await step(91, 'Raising water tower…');
     HE.EnvironmentGen._buildWaterTower(props);
+
+    await step(97, 'Forming storm clouds…');
     HE.EnvironmentGen._buildClouds(scene, clouds);   // clouds added directly to scene
 
     scene.add(props);
+
+    await step(100, 'Environment complete.');
 
     var ms = (performance.now() - t0).toFixed(1);
     console.log('[EnvironmentGen] Built — ' + clouds.length + ' clouds  |  '

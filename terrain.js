@@ -210,7 +210,7 @@ HE.TerrainGen = class {
      Returns: THREE.Mesh  — for callers that need a ref (e.g., dispose())
   ═══════════════════════════════════════════════════════════════════════ */
 
-  static generate(scene) {
+  static async generate(scene, onProgress) {
 
     console.log('[TerrainGen] Building '
       + _TRN.PATCH_W + ' x ' + _TRN.PATCH_D + ' wu terrain, '
@@ -243,8 +243,12 @@ HE.TerrainGen = class {
     var cnFreq2 = cnFreq * 1.7;
 
     /* ════════════════════════════════════════════════
-       MAIN VERTEX LOOP — height + colour
+       MAIN VERTEX LOOP — chunked for real progress
+       Yields to the browser every CHUNK_SIZE verts
+       so the loading bar actually repaints.
     ════════════════════════════════════════════════ */
+    var CHUNK_SIZE = 2000;
+
     for (var i = 0; i < vertCount; i++) {
 
       var wx = posAttr.getX(i);
@@ -312,6 +316,22 @@ HE.TerrainGen = class {
       colArr[i * 3    ] = HE.MathUtils.clamp(r, 0, 1);
       colArr[i * 3 + 1] = HE.MathUtils.clamp(g, 0, 1);
       colArr[i * 3 + 2] = HE.MathUtils.clamp(b, 0, 1);
+
+      /* ── Yield to browser every CHUNK_SIZE vertices ──
+         This is what makes the progress bar actually repaint.
+         Without this yield the entire loop blocks the main thread. */
+      if ((i + 1) % CHUNK_SIZE === 0 || i === vertCount - 1) {
+        var pct = Math.round(((i + 1) / vertCount) * 100);
+        if (typeof onProgress === 'function') {
+          onProgress(
+            pct,
+            'Terrain vertex ' + (i + 1).toLocaleString()
+            + ' / ' + vertCount.toLocaleString()
+          );
+        }
+        /* Yield: let the browser paint before continuing */
+        await new Promise(function(resolve) { setTimeout(resolve, 0); });
+      }
     }
 
     /* ── Attach colour attribute ── */
@@ -320,6 +340,11 @@ HE.TerrainGen = class {
     /* ── Recompute normals — critical after vertex Y displacement ──
        Without this, lighting on hilly terrain is completely wrong.   */
     geo.computeVertexNormals();
+
+    if (typeof onProgress === 'function') {
+      onProgress(100, 'Computing vertex normals…');
+      await new Promise(function(resolve) { setTimeout(resolve, 0); });
+    }
 
     /* ── Material: Lambert + vertex colours. No texture files. ── */
     var mat = new THREE.MeshLambertMaterial({

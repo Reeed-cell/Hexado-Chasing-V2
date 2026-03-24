@@ -126,6 +126,14 @@ HE.Tornado = class {
     this._debrisBudget = _TORN.DEBRIS_COUNT;
     this._visible    = false;
 
+    /* ── Pre-allocated Color temps — reused every frame, no GC ── */
+    this._tmpColA = new THREE.Color();
+    this._tmpColB = new THREE.Color();
+    this._tmpCol  = new THREE.Color();
+
+    /* ── Bound listener ref stored for clean off() in dispose() ── */
+    this._onPerfAdjustBound = this._onPerfAdjust.bind(this);
+
     /* ── Build all geometry ── */
     this._group = new THREE.Group();
     this._group.name = 'tornado';
@@ -140,7 +148,7 @@ HE.Tornado = class {
 
     /* ── Listen for performance adjustments ── */
     if (this._bus) {
-      this._bus.on('PERFORMANCE_ADJUST', this._onPerfAdjust.bind(this));
+      this._bus.on('PERFORMANCE_ADJUST', this._onPerfAdjustBound);
     }
 
     console.log('[Tornado] Ready — ' + _TORN.DEBRIS_COUNT + ' debris particles, '
@@ -402,19 +410,19 @@ HE.Tornado = class {
       _TORN.OPACITY_FORMING, _TORN.OPACITY_ACTIVE, this._intensity
     );
 
-    var col = new THREE.Color(targetHex);
+    this._tmpCol.set(targetHex);
 
     /* ── Main funnel tube ── */
     if (this._funnelMat) {
       this._funnelMat.opacity = targetOpacity;
-      this._funnelMat.color.set(col);
+      this._funnelMat.color.set(this._tmpCol);
       this._funnelMat.needsUpdate = true;
     }
 
     /* ── Skirt opacity ── */
     if (this._skirtMat) {
       this._skirtMat.opacity = HE.MathUtils.lerp(0.10, 0.30, this._intensity);
-      this._skirtMat.color.set(col);
+      this._skirtMat.color.set(this._tmpCol);
       this._skirtMat.needsUpdate = true;
     }
 
@@ -518,12 +526,13 @@ HE.Tornado = class {
      HELPERS
   ═══════════════════════════════════════════════════════════════════════ */
 
-  /* Linear interpolate between two hex colour values */
+  /* Linear interpolate between two hex colour values — uses pre-allocated
+     Color objects to avoid per-frame GC allocations. */
   _lerpColor(hexA, hexB, t) {
-    var ca = new THREE.Color(hexA);
-    var cb = new THREE.Color(hexB);
-    ca.lerp(cb, t);
-    return ca.getHex();
+    this._tmpColA.set(hexA);
+    this._tmpColB.set(hexB);
+    this._tmpColA.lerp(this._tmpColB, t);
+    return this._tmpColA.getHex();
   }
 
 
@@ -569,7 +578,7 @@ HE.Tornado = class {
 
     /* Unsubscribe */
     if (this._bus) {
-      this._bus.off('PERFORMANCE_ADJUST', this._onPerfAdjust.bind(this));
+      this._bus.off('PERFORMANCE_ADJUST', this._onPerfAdjustBound);
     }
 
     console.log('[Tornado] Disposed.');

@@ -101,7 +101,7 @@ var _MAIN = {
    HexadoEngine
    ═══════════════════════════════════════════════════════════════════════════ */
 
-class HexadoEngine {
+HE.HexadoEngine = class {
 
   /* ─────────────────────────────────────────────────────────────────────
      constructor()
@@ -175,36 +175,39 @@ class HexadoEngine {
   async init() {
 
     /* ── Step 1: EventBus + pure math (synchronous, instant) ── */
-    this._setLoading(8, 'Initialising event bus…');
+    this._setLoading(2, 'Initialising event bus…', 'eventbus.js · main-math.js');
     this.bus    = new HE.EventBus();
     this.vortex = new HE.VortexMath();
 
     /* ── Step 2: Storm system ── */
-    this._setLoading(16, 'Spawning storm cell…');
+    this._setLoading(6, 'Spawning storm cell…', 'weather.js · Rankine vortex aerodynamics');
     this.weather = new HE.WeatherSystem(this.bus);
 
     /* ── Step 3: Vehicle physics + key bindings ── */
-    this._setLoading(24, 'Calibrating vehicle dynamics…');
+    this._setLoading(10, 'Calibrating vehicle dynamics…', 'physics.js · WASD key bindings');
     this.physics = new HE.PhysicsEngine(this.bus);
     this.physics.bindKeys();
 
     /* ── Step 4: 3D engine + terrain + environment (most expensive) ──
-       Renderer.init() calls:
-         HE.Engine.init(canvas)       → scene, camera, WebGLRenderer
-         HE.TerrainGen.generate(scene)→ 120×120 vertex-coloured terrain
-         HE.EnvironmentGen.build(scene)→ poles, barns, trees, clouds …
-         new HE.ParticleEngine(scene) → rain + ambient debris
-       Progress jumps from 34 → 70 once the await resolves.            */
-    this._setLoading(34, 'Building 3D engine…');
+       renderer.init() drives real chunked progress from 10 → 96.
+       Every terrain vertex chunk and every environment section fires
+       a genuine callback — no simulated delays.                      */
+    this._setLoading(10, 'Building 3D engine…', '3DEngine.js · WebGL context');
     var canvas    = document.getElementById('canvas');
     this.renderer = new HE.Renderer(canvas, this.bus);
     this.renderer.setVortex(this.vortex);
-    await this.renderer.init();
-    this._setLoading(70, 'Plains generated…');
 
-    /* ── Step 5: Tornado ──
-       Needs scene (from renderer) and vortex (for funnelRadius).       */
-    this._setLoading(78, 'Conjuring tornado…');
+    var self = this;
+    await this.renderer.init(function(pct, msg, detail) {
+      /* Map renderer's 0-100 range into the 10-96 init window */
+      var mapped = Math.round(10 + (pct / 100) * 86);
+      self._setLoading(mapped, msg, detail || '');
+    });
+
+    this._setLoading(96, 'Plains generated…', 'Terrain · Environment · Particles ready');
+
+    /* ── Step 5: Tornado ── */
+    this._setLoading(97, 'Conjuring tornado…', 'tornado.js · Funnel mesh · Debris spiral');
     this.tornado = new HE.Tornado(
       this.renderer.scene,
       this.vortex,
@@ -212,20 +215,18 @@ class HexadoEngine {
     );
 
     /* ── Step 6: Characters ── */
-    this._setLoading(85, 'Placing storm chaser…');
+    this._setLoading(98, 'Placing storm chaser…', 'Characters.js · F-150 · Walker · Cameras');
     this._buildCharacters();
 
     /* ── Step 7: HUD + stat trackers ── */
-    this._setLoading(91, 'Calibrating HUD…');
+    this._setLoading(99, 'Calibrating HUD…', 'HUD.js · Minimap · EF bar · Alert system');
     this.stats   = new HE.PlayerStats();
     this.tracker = new HE.StormTracker();
     this.hud     = new HE.HUD();
-    this.hud.init(this.bus);   // wires ENTER_VEHICLE + EXIT_VEHICLE for mode label
+    this.hud.init(this.bus);
 
-    /* ── Step 8: Performance optimizer ──
-       Receives the THREE.WebGLRenderer via renderer.renderer so it can
-       read .info.render.triangles for the LOD decisions.               */
-    this._setLoading(97, 'Optimising performance…');
+    /* ── Step 8: Performance optimizer ── */
+    this._setLoading(100, 'Optimising performance…', 'performance-optimizer.js · LOD · Particle budget');
     this.perfOpt = new HE.PerformanceOptimizer(this.bus, this.renderer.renderer);
 
     /* ── Step 9: Bindings ── */
@@ -233,7 +234,7 @@ class HexadoEngine {
     this._wireStormCache();
 
     /* ── Done — fade out the loader overlay ── */
-    this._setLoading(100, 'Ready — good luck out there.');
+    this._setLoading(100, 'Ready — good luck out there.', '');
     await this._sleep(_MAIN.LOAD_FADE_DELAY);
 
     var loader = document.getElementById('loader');
@@ -349,8 +350,7 @@ class HexadoEngine {
           var suckA  = _MAIN.SUCK_K_VEHICLE * iSq / rSafe;
           var suckDx = -(dx2 / r2) * suckA * suckDt;
           var suckDz = -(dz2 / r2) * suckA * suckDt;
-          this.physics._pos.x += suckDx;
-          this.physics._pos.z += suckDz;
+          this.physics.applyPositionImpulse(suckDx, suckDz);
         } else if (this.walker.active) {
           var suckA  = _MAIN.SUCK_K_WALKER  * iSq / rSafe;
           var suckDx = -(dx2 / r2) * suckA * suckDt;
@@ -422,9 +422,8 @@ class HexadoEngine {
     this._syncVehicleMesh(dt);
 
     /* ── 6. Tornado ──
-       setIntensity() must precede update() so funnelRadius() returns
-       values consistent with the current storm intensity.              */
-    this.vortex.setIntensity(intensity);
+       tornado.update() calls vortex.setIntensity() internally as its
+       first step, so we don't need to call it here too. */
     this.tornado.update(dt, stormPos, intensity);
     this.tornado.setVisible(visible);
 
@@ -755,10 +754,7 @@ class HexadoEngine {
     var spawnZ = _MAIN.RESPAWN_POS_Z;
     var spawnY = this.renderer.heightAt(spawnX, spawnZ) + 0.85;
 
-    this.physics._pos.set(spawnX, spawnY, spawnZ);
-    this.physics._speed   = 0;
-    this.physics._heading = 0;
-    this.physics.cancelLift();
+    this.physics.respawn(spawnX, spawnY, spawnZ);
 
     /* ── If on foot, also reset walker and force back into vehicle ── */
     if (!this.inVehicle) {
@@ -812,11 +808,13 @@ class HexadoEngine {
      msg : string — status line below the bar
   ═══════════════════════════════════════════════════════════════════════ */
 
-  _setLoading(pct, msg) {
+  _setLoading(pct, msg, detail) {
     var bar    = document.getElementById('load-bar');
     var status = document.getElementById('load-status');
+    var det    = document.getElementById('load-detail');
     if (bar)    bar.style.width    = pct + '%';
     if (status) status.textContent = msg;
+    if (det)    det.textContent    = (detail !== undefined) ? detail : '';
   }
 
 
@@ -850,7 +848,7 @@ class HexadoEngine {
 
 window.addEventListener('load', async function() {
   try {
-    window.game = new HexadoEngine();
+    window.game = new HE.HexadoEngine();
     await window.game.init();
     window.game.start();
   } catch (err) {
@@ -859,7 +857,9 @@ window.addEventListener('load', async function() {
     /* Surface the error visually so the player isn't left on a black screen */
     var status = document.getElementById('load-status');
     var bar    = document.getElementById('load-bar');
+    var det    = document.getElementById('load-detail');
     if (status) status.textContent = 'Boot error — see console (F12)';
     if (bar)    bar.style.background = '#ff2222';
+    if (det)    det.textContent = err.message || '';
   }
 });
