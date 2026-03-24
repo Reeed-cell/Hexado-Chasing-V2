@@ -253,141 +253,517 @@ HE.VehicleFactory = class {
     var g = new THREE.Group();
     g.name = 'vehicle';
 
-    var CW   = _CH.TRUCK_CHASSIS_W;
-    var CH   = _CH.TRUCK_CHASSIS_H;
-    var CD   = _CH.TRUCK_CHASSIS_D;
-    var cabD = _CH.TRUCK_CAB_D;
-    var bedD = _CH.TRUCK_BED_D;
+    /* ── Core dimensions ── */
+    var CW    = _CH.TRUCK_CHASSIS_W;    // 2.10
+    var CH    = _CH.TRUCK_CHASSIS_H;    // 0.32
+    var CD    = _CH.TRUCK_CHASSIS_D;    // 4.80
+    var cabW  = _CH.TRUCK_CAB_W;        // 2.10
+    var cabH  = _CH.TRUCK_CAB_H;        // 1.42
+    var cabD  = _CH.TRUCK_CAB_D;        // 2.20
+    var bedD  = _CH.TRUCK_BED_D;        // 2.40
+    var hoodD = _CH.TRUCK_HOOD_D;       // 1.20
+    var hoodH = _CH.TRUCK_HOOD_H;       // 0.40
+    var bedH  = _CH.TRUCK_BED_H;        // 0.68
+    var roofH = _CH.TRUCK_ROOF_PEAK;    // 0.18
 
-    /* Chassis slab sits with its top at VEHICLE_CLEARANCE height.
-       We set Y = CH/2 so bottom face is at Y=0 (ground contact ref). */
+    /* ── Derived Z centres ── */
+    var hoodZ = -CD * 0.5 + hoodD * 0.5;
+    var cabZ  = -CD * 0.5 + hoodD + cabD * 0.5;
+    var bedZ  =  cabZ + cabD * 0.5 + bedD * 0.5;
+
+    /* ── Derived Y levels ── */
+    var cabBaseY = CH;
+    var cabTopY  = CH + cabH;
+
+    /* ── Extra inline materials ── */
+    var matFlatBlack = new THREE.MeshLambertMaterial({ color: 0x111111 });
+    var matSkid      = new THREE.MeshLambertMaterial({ color: 0x282828 });
+    var matAmber     = new THREE.MeshLambertMaterial({
+      color: 0xff9900,
+      emissive: new THREE.Color(0xdd6600), emissiveIntensity: 0.8
+    });
+    var matSteel     = new THREE.MeshLambertMaterial({ color: 0x3a3a3a });
+    var matRotor     = new THREE.MeshLambertMaterial({ color: 0x4a4a4a });
+    var matCenter    = new THREE.MeshLambertMaterial({ color: 0xcccccc });
+
+    /* ══════════════════════════════════════════════════════════
+       1. CHASSIS + FRAME RAILS
+    ══════════════════════════════════════════════════════════ */
     var chassis = _box(CW, CH, CD, _MATS.body);
     chassis.name = 'chassis';
     chassis.position.y = CH * 0.5;
     chassis.castShadow = true;
     g.add(chassis);
 
-    /* ── Hood — slopes above chassis, forward of cab ── */
-    var hoodW = CW;
-    var hoodH = _CH.TRUCK_HOOD_H;
-    var hoodD = _CH.TRUCK_HOOD_D;
-    var hood  = _box(hoodW, hoodH, hoodD, _MATS.body);
+    /* Longitudinal frame rails visible under body */
+    for (var si = -1; si <= 1; si += 2) {
+      var rail = _box(0.14, CH * 0.55, CD * 0.92, matFlatBlack);
+      rail.name = 'frameRail_' + (si < 0 ? 'L' : 'R');
+      rail.position.set(si * (CW * 0.5 - 0.12), CH * 0.22, 0);
+      g.add(rail);
+    }
+
+    /* ══════════════════════════════════════════════════════════
+       2. HOOD — center spine + side vent creases
+    ══════════════════════════════════════════════════════════ */
+    var hood = _box(CW, hoodH, hoodD, _MATS.body);
     hood.name = 'hood';
-    /* Hood sits on top of chassis front section */
-    hood.position.set(0, CH + hoodH * 0.5, -CD * 0.5 + hoodD * 0.5);
+    hood.position.set(0, cabBaseY + hoodH * 0.5, hoodZ);
     hood.castShadow = true;
     g.add(hood);
 
-    /* ── Cab — main passenger compartment ── */
-    var cabW = _CH.TRUCK_CAB_W;
-    var cabH = _CH.TRUCK_CAB_H;
-    /* Centre of cab: offset forward from chassis centre */
-    var cabZ = -CD * 0.5 + hoodD + cabD * 0.5;
-    var cab  = _box(cabW, cabH, cabD, _MATS.cabin);
+    /* Center spine ridge running front-to-back */
+    var hoodSpine = _box(0.26, 0.08, hoodD * 0.82, _MATS.cabin);
+    hoodSpine.name = 'hoodSpine';
+    hoodSpine.position.set(0, cabBaseY + hoodH + 0.04, hoodZ + 0.05);
+    g.add(hoodSpine);
+
+    /* Side vent scoops — raised creases flanking the spine */
+    for (var si = -1; si <= 1; si += 2) {
+      var vent = _box(0.20, 0.04, hoodD * 0.48, _MATS.cabin);
+      vent.name = 'hoodVent_' + (si < 0 ? 'L' : 'R');
+      vent.position.set(si * 0.52, cabBaseY + hoodH + 0.02, hoodZ + 0.08);
+      g.add(vent);
+    }
+
+    /* ══════════════════════════════════════════════════════════
+       3. CAB BODY + GREENHOUSE PILLARS
+       Main cab box defines the opaque lower body.
+       A/B/C pillar boxes frame the window openings,
+       giving the silhouette depth and structure.
+    ══════════════════════════════════════════════════════════ */
+    var cab = _box(cabW, cabH, cabD, _MATS.cabin);
     cab.name = 'cab';
-    cab.position.set(0, CH + cabH * 0.5, cabZ);
+    cab.position.set(0, cabBaseY + cabH * 0.5, cabZ);
     cab.castShadow = true;
     g.add(cab);
 
-    /* ── Roof — slight raised box above cab top ── */
-    var roofH = _CH.TRUCK_ROOF_PEAK;
-    var roof  = _box(cabW - 0.08, roofH, cabD - 0.18, _MATS.cabin);
+    /* Roof slab — slightly narrowed for taper */
+    var roof = _box(cabW - 0.10, roofH + 0.08, cabD - 0.20, _MATS.cabin);
     roof.name = 'roof';
-    roof.position.set(0, CH + cabH + roofH * 0.5, cabZ);
+    roof.position.set(0, cabTopY + roofH * 0.5, cabZ);
+    roof.castShadow = true;
     g.add(roof);
 
-    /* ── Windshield — tilted dark glass panel ── */
-    var wsH  = cabH * 0.68;
-    var wsD  = 0.08;
-    var ws   = _box(cabW - 0.14, wsH, wsD, _MATS.glass);
-    ws.name  = 'windshield';
-    ws.position.set(0, CH + cabH * 0.5 + 0.05, cabZ - cabD * 0.5 + 0.04);
-    ws.rotation.x = 0.25;   // slight forward lean
+    /* Roof drip rail — slim overhang lip all around */
+    var roofLip = _box(cabW + 0.05, 0.04, cabD + 0.05, _MATS.cabin);
+    roofLip.name = 'roofLip';
+    roofLip.position.set(0, cabTopY + 0.02, cabZ);
+    g.add(roofLip);
+
+    /* ── A-Pillars (front uprights, angled with windshield) ── */
+    for (var si = -1; si <= 1; si += 2) {
+      var ap = _box(0.11, cabH * 0.78, 0.11, _MATS.cabin);
+      ap.name = 'aPillar_' + (si < 0 ? 'L' : 'R');
+      ap.position.set(
+        si * (cabW * 0.5 - 0.055),
+        cabBaseY + cabH * 0.50,
+        cabZ - cabD * 0.5 + 0.07
+      );
+      g.add(ap);
+    }
+
+    /* ── B-Pillars (centre uprights between front/rear door) ── */
+    for (var si = -1; si <= 1; si += 2) {
+      var bp = _box(0.11, cabH * 0.88, 0.11, _MATS.cabin);
+      bp.name = 'bPillar_' + (si < 0 ? 'L' : 'R');
+      bp.position.set(si * (cabW * 0.5 - 0.055), cabBaseY + cabH * 0.50, cabZ + 0.06);
+      g.add(bp);
+    }
+
+    /* ── C-Pillars (rear uprights, thick for structural feel) ── */
+    for (var si = -1; si <= 1; si += 2) {
+      var cp = _box(0.14, cabH * 0.82, 0.14, _MATS.cabin);
+      cp.name = 'cPillar_' + (si < 0 ? 'L' : 'R');
+      cp.position.set(
+        si * (cabW * 0.5 - 0.07),
+        cabBaseY + cabH * 0.50,
+        cabZ + cabD * 0.5 - 0.08
+      );
+      g.add(cp);
+    }
+
+    /* ══════════════════════════════════════════════════════════
+       4. GLASS — windshield, rear, side panes
+    ══════════════════════════════════════════════════════════ */
+
+    /* Windshield header (top framing bar above glass) */
+    var wsHeader = _box(cabW - 0.28, 0.08, 0.10, _MATS.cabin);
+    wsHeader.position.set(0, cabTopY - 0.07, cabZ - cabD * 0.5 + 0.06);
+    g.add(wsHeader);
+
+    /* Main windshield — tall, well-angled */
+    var wsH = cabH * 0.74;
+    var ws  = _box(cabW - 0.28, wsH, 0.07, _MATS.glass);
+    ws.name = 'windshield';
+    ws.position.set(0, cabBaseY + cabH * 0.52, cabZ - cabD * 0.5 + 0.05);
+    ws.rotation.x = 0.28;
     g.add(ws);
 
-    /* ── Rear cab window ── */
-    var rw  = _box(cabW - 0.14, wsH * 0.8, wsD, _MATS.glass);
+    /* Rear window */
+    var rw = _box(cabW - 0.30, wsH * 0.84, 0.07, _MATS.glass);
     rw.name = 'rearWindow';
-    rw.position.set(0, CH + cabH * 0.45, cabZ + cabD * 0.5 - 0.04);
+    rw.position.set(0, cabBaseY + cabH * 0.48, cabZ + cabD * 0.5 - 0.05);
     rw.rotation.x = -0.18;
     g.add(rw);
 
-    /* ── Side windows (left + right) ── */
-    for (var side = -1; side <= 1; side += 2) {
-      var sw  = _box(0.06, wsH * 0.75, cabD - 0.28, _MATS.glass);
-      sw.name = 'sideWindow_' + (side < 0 ? 'L' : 'R');
-      sw.position.set(side * (cabW * 0.5 + 0.03), CH + cabH * 0.48, cabZ);
-      g.add(sw);
+    /* Side windows — front pane (larger, between A and B pillar) */
+    for (var si = -1; si <= 1; si += 2) {
+      var sfw = _box(0.06, wsH * 0.82, cabD * 0.40, _MATS.glass);
+      sfw.name = 'sideWinFront_' + (si < 0 ? 'L' : 'R');
+      sfw.position.set(si * (cabW * 0.5 + 0.02), cabBaseY + cabH * 0.54, cabZ - cabD * 0.12);
+      g.add(sfw);
+
+      /* Rear quarter window (smaller, between B and C pillar) */
+      var sqw = _box(0.06, wsH * 0.68, cabD * 0.28, _MATS.glass);
+      sqw.name = 'sideWinRear_' + (si < 0 ? 'L' : 'R');
+      sqw.position.set(si * (cabW * 0.5 + 0.02), cabBaseY + cabH * 0.50, cabZ + cabD * 0.29);
+      g.add(sqw);
     }
 
-    /* ── Truck bed ── */
-    var bedZ  = cabZ + cabD * 0.5 + bedD * 0.5;
-    var bedH  = _CH.TRUCK_BED_H;
+    /* ══════════════════════════════════════════════════════════
+       5. SIDE MIRRORS — arm + face
+    ══════════════════════════════════════════════════════════ */
+    for (var si = -1; si <= 1; si += 2) {
+      var mArm = _box(0.06, 0.06, 0.22, _MATS.cabin);
+      mArm.name = 'mirrorArm_' + (si < 0 ? 'L' : 'R');
+      mArm.position.set(
+        si * (cabW * 0.5 + 0.10),
+        cabBaseY + cabH * 0.78,
+        cabZ - cabD * 0.5 + 0.30
+      );
+      g.add(mArm);
+
+      var mFace = _box(0.05, 0.22, 0.14, _MATS.dash);
+      mFace.name = 'mirrorFace_' + (si < 0 ? 'L' : 'R');
+      mFace.position.set(
+        si * (cabW * 0.5 + 0.13),
+        cabBaseY + cabH * 0.80,
+        cabZ - cabD * 0.5 + 0.34
+      );
+      g.add(mFace);
+    }
+
+    /* ══════════════════════════════════════════════════════════
+       6. STORM CHASER ROOF RACK + LIGHT BAR
+       Signature storm-chaser equipment rig.
+    ══════════════════════════════════════════════════════════ */
+    var rackY = cabTopY + roofH + 0.10;
+
+    /* Two longitudinal rails */
+    for (var si = -1; si <= 1; si += 2) {
+      var rackRail = _box(0.06, 0.06, cabD * 0.74, _MATS.chrome);
+      rackRail.name = 'rackRail_' + (si < 0 ? 'L' : 'R');
+      rackRail.position.set(si * 0.54, rackY, cabZ);
+      g.add(rackRail);
+    }
+
+    /* Three cross bars */
+    var cbOffsets = [-0.54, 0.02, 0.58];
+    for (var ci = 0; ci < cbOffsets.length; ci++) {
+      var cbar = _box(cabW * 0.70, 0.06, 0.06, _MATS.chrome);
+      cbar.name = 'rackCross_' + ci;
+      cbar.position.set(0, rackY, cabZ + cbOffsets[ci]);
+      g.add(cbar);
+    }
+
+    /* Amber light bar housing */
+    var lbBody = _box(cabW * 0.66, 0.10, 0.20, matSkid);
+    lbBody.name = 'lightBarBody';
+    lbBody.position.set(0, rackY + 0.10, cabZ - cabD * 0.30);
+    g.add(lbBody);
+
+    /* Individual amber lights — 5 lenses */
+    for (var li = 0; li < 5; li++) {
+      var lbX     = ((li / 4) - 0.5) * (cabW * 0.54);
+      var lbLight = _box(0.11, 0.08, 0.11, matAmber);
+      lbLight.name = 'lbLight_' + li;
+      lbLight.position.set(lbX, rackY + 0.14, cabZ - cabD * 0.30);
+      g.add(lbLight);
+    }
+
+    /* Equipment boxes — sensor/laptop mounts on rack rear */
+    var eq1 = _box(0.42, 0.15, 0.32, matSkid);
+    eq1.name = 'equipBox1';
+    eq1.position.set(-0.26, rackY + 0.12, cabZ + 0.20);
+    g.add(eq1);
+
+    var eq2 = _box(0.26, 0.11, 0.24, matSteel);
+    eq2.name = 'equipBox2';
+    eq2.position.set( 0.28, rackY + 0.10, cabZ + 0.24);
+    g.add(eq2);
+
+    /* Small antenna mast at rear of rack */
+    var antBase = _cyl(0.04, 0.04, 0.10, 6, matSteel);
+    antBase.position.set(0.50, rackY + 0.08, cabZ + cabD * 0.32);
+    g.add(antBase);
+    var antMast = _cyl(0.02, 0.02, 0.38, 6, _MATS.chrome);
+    antMast.position.set(0.50, rackY + 0.34, cabZ + cabD * 0.32);
+    g.add(antMast);
+
+    /* ══════════════════════════════════════════════════════════
+       7. DOOR PANEL DETAILS — body crease + handles
+    ══════════════════════════════════════════════════════════ */
+    for (var si = -1; si <= 1; si += 2) {
+      /* Horizontal character line spanning cab + bed */
+      var crease = _box(0.04, 0.05, cabD + bedD - 0.20, _MATS.cabin);
+      crease.name = 'bodyCrease_' + (si < 0 ? 'L' : 'R');
+      crease.position.set(
+        si * (CW * 0.5 + 0.02),
+        cabBaseY + cabH * 0.28,
+        (cabZ + bedZ) * 0.5
+      );
+      g.add(crease);
+
+      /* Door handle — small chrome pull */
+      var dh = _box(0.05, 0.09, 0.24, _MATS.chrome);
+      dh.name = 'doorHandle_' + (si < 0 ? 'L' : 'R');
+      dh.position.set(si * (cabW * 0.5 + 0.04), cabBaseY + cabH * 0.55, cabZ + 0.12);
+      g.add(dh);
+    }
+
+    /* ══════════════════════════════════════════════════════════
+       8. TRUCK BED — floor + walls + liner + rail caps
+    ══════════════════════════════════════════════════════════ */
     var bedFloor = _box(CW, 0.10, bedD, _MATS.body);
     bedFloor.name = 'bedFloor';
-    bedFloor.position.set(0, CH + 0.05, bedZ);
+    bedFloor.position.set(0, cabBaseY + 0.05, bedZ);
     g.add(bedFloor);
 
-    /* Bed side walls (left + right) */
-    for (var side = -1; side <= 1; side += 2) {
-      var bsw  = _box(0.10, bedH, bedD, _MATS.body);
-      bsw.name = 'bedSide_' + (side < 0 ? 'L' : 'R');
-      bsw.position.set(side * (CW * 0.5 - 0.05), CH + bedH * 0.5, bedZ);
+    /* Dark bed liner inside walls */
+    var bedLiner = _box(CW - 0.30, bedH - 0.06, bedD - 0.06, matFlatBlack);
+    bedLiner.name = 'bedLiner';
+    bedLiner.position.set(0, cabBaseY + (bedH - 0.06) * 0.5 + 0.02, bedZ);
+    g.add(bedLiner);
+
+    /* Bed side walls + chrome rail caps */
+    for (var si = -1; si <= 1; si += 2) {
+      var bsw = _box(0.12, bedH, bedD, _MATS.body);
+      bsw.name = 'bedSide_' + (si < 0 ? 'L' : 'R');
+      bsw.position.set(si * (CW * 0.5 - 0.06), cabBaseY + bedH * 0.5, bedZ);
       g.add(bsw);
+
+      var railCap = _box(0.10, 0.07, bedD + 0.04, _MATS.chrome);
+      railCap.name = 'bedRailCap_' + (si < 0 ? 'L' : 'R');
+      railCap.position.set(si * (CW * 0.5 - 0.06), cabBaseY + bedH + 0.03, bedZ);
+      g.add(railCap);
     }
 
-    /* Bed rear wall (tailgate) */
-    var tailgate = _box(CW, bedH, 0.10, _MATS.body);
+    /* Tailgate */
+    var tailgate = _box(CW - 0.08, bedH, 0.12, _MATS.body);
     tailgate.name = 'tailgate';
-    tailgate.position.set(0, CH + bedH * 0.5, bedZ + bedD * 0.5 - 0.05);
+    tailgate.position.set(0, cabBaseY + bedH * 0.5, bedZ + bedD * 0.5 - 0.06);
     g.add(tailgate);
 
-    /* ── Front bumper + grill ── */
-    var frontBumper = _box(CW + 0.14, 0.18, 0.18, _MATS.chrome);
-    frontBumper.name = 'frontBumper';
-    frontBumper.position.set(0, CH * 0.6, -CD * 0.5 - 0.08);
-    g.add(frontBumper);
+    /* Tailgate chrome handle bar */
+    var tgHandle = _box(CW * 0.36, 0.06, 0.07, _MATS.chrome);
+    tgHandle.name = 'tailgateHandle';
+    tgHandle.position.set(0, cabBaseY + bedH * 0.52, bedZ + bedD * 0.5 + 0.04);
+    g.add(tgHandle);
 
-    var grill = _box(CW * 0.72, 0.30, 0.10, _MATS.dash);
-    grill.name = 'grill';
-    grill.position.set(0, CH * 0.85, -CD * 0.5 - 0.04);
-    g.add(grill);
+    /* ══════════════════════════════════════════════════════════
+       9. FRONT END — skid plate + grille bars + bumper + hooks
+    ══════════════════════════════════════════════════════════ */
 
-    /* ── Rear bumper ── */
-    var rearBumper = _box(CW + 0.14, 0.18, 0.18, _MATS.chrome);
-    rearBumper.name = 'rearBumper';
-    rearBumper.position.set(0, CH * 0.6, CD * 0.5 + 0.08);
-    g.add(rearBumper);
+    /* Heavy skid plate — flat black underbody protection */
+    var skid = _box(CW + 0.24, 0.26, 0.30, matSkid);
+    skid.name = 'skidPlate';
+    skid.position.set(0, CH * 0.44, -CD * 0.5 - 0.13);
+    skid.castShadow = true;
+    g.add(skid);
 
-    /* ── Headlights (pair) ── */
-    var hlGeo = new THREE.BoxGeometry(0.28, 0.16, 0.06);
-    var hlMat = new THREE.MeshLambertMaterial({
-      color: 0xffffee,
-      emissive: new THREE.Color(0xffffcc),
-      emissiveIntensity: 0.6
-    });
-    for (var side = -1; side <= 1; side += 2) {
-      var hl  = new THREE.Mesh(hlGeo, hlMat);
-      hl.name = 'headlight_' + (side < 0 ? 'L' : 'R');
-      hl.position.set(side * 0.70, CH + hoodH * 0.8, -CD * 0.5 - 0.02);
-      g.add(hl);
+    /* Front bumper — main chrome bar */
+    var fBumper = _box(CW + 0.18, 0.14, 0.17, _MATS.chrome);
+    fBumper.name = 'frontBumper';
+    fBumper.position.set(0, cabBaseY + 0.28, -CD * 0.5 - 0.07);
+    g.add(fBumper);
+
+    /* Bumper end caps — flat black */
+    for (var si = -1; si <= 1; si += 2) {
+      var bec = _box(0.16, 0.24, 0.24, matSkid);
+      bec.name = 'bumperEndCap_' + (si < 0 ? 'L' : 'R');
+      bec.position.set(si * (CW * 0.5 + 0.06), cabBaseY + 0.20, -CD * 0.5 - 0.09);
+      g.add(bec);
     }
 
-    /* ── Taillights (pair) ── */
-    var tlGeo = new THREE.BoxGeometry(0.22, 0.18, 0.06);
-    var tlMat = new THREE.MeshLambertMaterial({
-      color: 0xff1111,
-      emissive: new THREE.Color(0xcc0000),
-      emissiveIntensity: 0.5
-    });
-    for (var side = -1; side <= 1; side += 2) {
-      var tl  = new THREE.Mesh(tlGeo, tlMat);
-      tl.name = 'taillight_' + (side < 0 ? 'L' : 'R');
-      tl.position.set(side * 0.72, CH + 0.38, CD * 0.5 + 0.02);
-      g.add(tl);
+    /* Grille surround frame */
+    var grillFrame = _box(CW * 0.84, 0.40, 0.10, _MATS.cabin);
+    grillFrame.name = 'grilleFrame';
+    grillFrame.position.set(0, cabBaseY + hoodH * 0.54, -CD * 0.5 - 0.04);
+    g.add(grillFrame);
+
+    /* Grille background mesh */
+    var grillBg = _box(CW * 0.70, 0.32, 0.06, _MATS.dash);
+    grillBg.name = 'grilleBg';
+    grillBg.position.set(0, cabBaseY + hoodH * 0.45, -CD * 0.5 - 0.02);
+    g.add(grillBg);
+
+    /* Grille horizontal bars — 4 chrome strips */
+    for (var gi = 0; gi < 4; gi++) {
+      var gy   = cabBaseY + 0.09 + gi * 0.08;
+      var gbar = _box(CW * 0.68, 0.04, 0.09, _MATS.chrome);
+      gbar.name = 'grilleBar_' + gi;
+      gbar.position.set(0, gy, -CD * 0.5 - 0.01);
+      g.add(gbar);
     }
 
-    /* ── Wheels × 4 ── */
+    /* Tow hooks — chrome blocks at base of skid plate */
+    for (var si = -1; si <= 1; si += 2) {
+      var hook = _box(0.11, 0.11, 0.20, _MATS.chrome);
+      hook.name = 'towHook_' + (si < 0 ? 'L' : 'R');
+      hook.position.set(si * 0.50, CH * 0.22, -CD * 0.5 - 0.20);
+      g.add(hook);
+    }
+
+    /* ══════════════════════════════════════════════════════════
+       10. HEADLIGHTS — housing + main lamp + DRL strip
+    ══════════════════════════════════════════════════════════ */
+    var matHLHousing = new THREE.MeshLambertMaterial({ color: 0x1c1c1c });
+    var matHLLamp    = new THREE.MeshLambertMaterial({
+      color: 0xffffff, emissive: new THREE.Color(0xfff0cc), emissiveIntensity: 1.0
+    });
+    var matDRL = new THREE.MeshLambertMaterial({
+      color: 0xffffff, emissive: new THREE.Color(0xffffff), emissiveIntensity: 0.65
+    });
+
+    for (var si = -1; si <= 1; si += 2) {
+      var hlH = _box(0.40, 0.24, 0.11, matHLHousing);
+      hlH.name = 'hlHousing_' + (si < 0 ? 'L' : 'R');
+      hlH.position.set(si * 0.67, cabBaseY + hoodH * 0.68, -CD * 0.5 - 0.04);
+      g.add(hlH);
+
+      var hlL = _box(0.22, 0.13, 0.07, matHLLamp);
+      hlL.name = 'hlLamp_' + (si < 0 ? 'L' : 'R');
+      hlL.position.set(si * 0.67, cabBaseY + hoodH * 0.72, -CD * 0.5 - 0.06);
+      g.add(hlL);
+
+      /* DRL — thin white running strip below main lamp */
+      var drl = _box(0.36, 0.04, 0.07, matDRL);
+      drl.name = 'drl_' + (si < 0 ? 'L' : 'R');
+      drl.position.set(si * 0.67, cabBaseY + hoodH * 0.44, -CD * 0.5 - 0.05);
+      g.add(drl);
+    }
+
+    /* ══════════════════════════════════════════════════════════
+       11. TAILLIGHTS — housing + red lamp + reverse strip + brake bar
+    ══════════════════════════════════════════════════════════ */
+    var matTLHousing = new THREE.MeshLambertMaterial({ color: 0x1a0000 });
+    var matTLRed     = new THREE.MeshLambertMaterial({
+      color: 0xff2200, emissive: new THREE.Color(0xcc1100), emissiveIntensity: 0.75
+    });
+    var matTLWhite   = new THREE.MeshLambertMaterial({
+      color: 0xffffff, emissive: new THREE.Color(0xaaaaaa), emissiveIntensity: 0.4
+    });
+
+    for (var si = -1; si <= 1; si += 2) {
+      var tlH = _box(0.32, 0.34, 0.11, matTLHousing);
+      tlH.name = 'tlHousing_' + (si < 0 ? 'L' : 'R');
+      tlH.position.set(si * 0.71, cabBaseY + bedH * 0.56, bedZ + bedD * 0.5 + 0.04);
+      g.add(tlH);
+
+      var tlL = _box(0.20, 0.20, 0.07, matTLRed);
+      tlL.name = 'tlLamp_' + (si < 0 ? 'L' : 'R');
+      tlL.position.set(si * 0.71, cabBaseY + bedH * 0.62, bedZ + bedD * 0.5 + 0.06);
+      g.add(tlL);
+
+      var tlRev = _box(0.22, 0.07, 0.07, matTLWhite);
+      tlRev.name = 'tlReverse_' + (si < 0 ? 'L' : 'R');
+      tlRev.position.set(si * 0.71, cabBaseY + bedH * 0.24, bedZ + bedD * 0.5 + 0.06);
+      g.add(tlRev);
+    }
+
+    /* High brake light bar across tailgate top */
+    var brakebar = _box(CW * 0.68, 0.05, 0.07, matTLRed);
+    brakebar.name = 'brakeBar';
+    brakebar.position.set(0, cabBaseY + bedH * 0.95, bedZ + bedD * 0.5 + 0.05);
+    g.add(brakebar);
+
+    /* ══════════════════════════════════════════════════════════
+       12. REAR END — bumper + step + tow hitch + exhaust tip
+    ══════════════════════════════════════════════════════════ */
+
+    /* Rear chrome bumper */
+    var rBumper = _box(CW + 0.18, 0.14, 0.17, _MATS.chrome);
+    rBumper.name = 'rearBumper';
+    rBumper.position.set(0, cabBaseY + 0.22, CD * 0.5 + 0.07);
+    g.add(rBumper);
+
+    /* Skid step surface on bumper */
+    var rStep = _box(CW * 0.58, 0.06, 0.24, matSkid);
+    rStep.name = 'rearStep';
+    rStep.position.set(0, cabBaseY + 0.14, CD * 0.5 + 0.11);
+    g.add(rStep);
+
+    /* Tow hitch receiver + ball */
+    var hitchR = _box(0.19, 0.15, 0.32, matSkid);
+    hitchR.name = 'hitchReceiver';
+    hitchR.position.set(0, CH * 0.54, CD * 0.5 + 0.24);
+    g.add(hitchR);
+
+    var hitchBall = _cyl(0.065, 0.085, 0.13, 10, _MATS.chrome);
+    hitchBall.name = 'hitchBall';
+    hitchBall.position.set(0, CH * 0.36, CD * 0.5 + 0.38);
+    g.add(hitchBall);
+
+    /* Exhaust tip — right side exit */
+    var exhaust = _cyl(0.055, 0.070, 0.24, 10, matSteel);
+    exhaust.name = 'exhaustTip';
+    exhaust.rotation.x = Math.PI * 0.5;
+    exhaust.position.set(0.58, CH * 0.36, CD * 0.5 + 0.10);
+    g.add(exhaust);
+
+    /* ══════════════════════════════════════════════════════════
+       13. FENDER FLARES — arch over each wheel well
+    ══════════════════════════════════════════════════════════ */
+    var flareW = 0.18;
+    var wzList = [_CH.WHEEL_Z_FRONT, _CH.WHEEL_Z_REAR];
+
+    for (var wi = 0; wi < wzList.length; wi++) {
+      var wz = wzList[wi];
+      for (var si = -1; si <= 1; si += 2) {
+        var outerX = si * (_CH.WHEEL_X + _CH.WHEEL_W * 0.5 + flareW * 0.40);
+
+        /* Vertical outer face of flare */
+        var flareBody = _box(flareW, 0.24, _CH.WHEEL_W * 2.20, matFlatBlack);
+        flareBody.name = 'flare_' + wi + '_' + (si < 0 ? 'L' : 'R');
+        flareBody.position.set(outerX, _CH.WHEEL_R + 0.04, wz);
+        g.add(flareBody);
+
+        /* Horizontal top cap of flare */
+        var flareTop = _box(flareW + 0.10, 0.06, _CH.WHEEL_W * 2.36, matFlatBlack);
+        flareTop.name = 'flareTop_' + wi + '_' + (si < 0 ? 'L' : 'R');
+        flareTop.position.set(outerX, _CH.WHEEL_R * 1.92, wz);
+        g.add(flareTop);
+      }
+    }
+
+    /* ══════════════════════════════════════════════════════════
+       14. RUNNING BOARDS — step bars between wheel arches
+    ══════════════════════════════════════════════════════════ */
+    var rbLen = Math.abs(_CH.WHEEL_Z_REAR - _CH.WHEEL_Z_FRONT) + 0.36;
+    var rbCz  = (_CH.WHEEL_Z_FRONT + _CH.WHEEL_Z_REAR) * 0.5;
+
+    for (var si = -1; si <= 1; si += 2) {
+      /* Step board surface */
+      var rb = _box(0.24, 0.06, rbLen, matFlatBlack);
+      rb.name = 'runningBoard_' + (si < 0 ? 'L' : 'R');
+      rb.position.set(si * (CW * 0.5 + 0.09), cabBaseY - 0.08, rbCz);
+      g.add(rb);
+
+      /* Three support brackets */
+      var bktOffsets = [-rbLen * 0.32, 0, rbLen * 0.32];
+      for (var bi = 0; bi < 3; bi++) {
+        var bkt = _box(0.18, 0.18, 0.06, matFlatBlack);
+        bkt.name = 'rbBkt_' + (si < 0 ? 'L' : 'R') + '_' + bi;
+        bkt.position.set(si * (CW * 0.5 + 0.09), cabBaseY - 0.14, rbCz + bktOffsets[bi]);
+        g.add(bkt);
+      }
+    }
+
+    /* ══════════════════════════════════════════════════════════
+       15. WHEELS × 4 — tyre + sidewall ring + hub + rotor +
+                        center cap + 6 lug bolts
+    ══════════════════════════════════════════════════════════ */
     var wheelPositions = [
       { x: -_CH.WHEEL_X, z: _CH.WHEEL_Z_FRONT, name: 'wheel_FL' },
       { x:  _CH.WHEEL_X, z: _CH.WHEEL_Z_FRONT, name: 'wheel_FR' },
@@ -395,41 +771,62 @@ HE.VehicleFactory = class {
       { x:  _CH.WHEEL_X, z: _CH.WHEEL_Z_REAR,  name: 'wheel_RR' }
     ];
 
-    var tyreGeo = new THREE.CylinderGeometry(
-      _CH.WHEEL_R, _CH.WHEEL_R, _CH.WHEEL_W, 18
-    );
-    var hubGeo  = new THREE.CylinderGeometry(
-      _CH.HUB_R, _CH.HUB_R, _CH.HUB_W + 0.02, 14
-    );
+    var tyreGeo     = new THREE.CylinderGeometry(_CH.WHEEL_R, _CH.WHEEL_R, _CH.WHEEL_W, 22);
+    var sidewallGeo = new THREE.CylinderGeometry(_CH.WHEEL_R * 0.87, _CH.WHEEL_R * 0.87, 0.04, 22);
+    var hubGeo      = new THREE.CylinderGeometry(_CH.HUB_R, _CH.HUB_R, _CH.HUB_W + 0.02, 16);
+    var rotorGeo    = new THREE.CylinderGeometry(_CH.HUB_R * 0.78, _CH.HUB_R * 0.78, 0.04, 16);
+    var capGeo      = new THREE.CylinderGeometry(0.068, 0.068, 0.06, 12);
+    var lugGeo      = new THREE.CylinderGeometry(0.022, 0.022, 0.08, 6);
+    var matSidewall = new THREE.MeshLambertMaterial({ color: 0x242424 });
+    var matLug      = new THREE.MeshLambertMaterial({ color: 0x888888 });
 
     for (var wi = 0; wi < wheelPositions.length; wi++) {
       var wp     = wheelPositions[wi];
       var wGroup = new THREE.Group();
       wGroup.name = wp.name;
 
-      /* Tyre */
+      var outX = wp.x < 0 ? -1 : 1;   // outer direction sign
+
+      /* Tyre body */
       var tyre = new THREE.Mesh(tyreGeo, _MATS.wheel);
-      tyre.rotation.z = Math.PI / 2;   // lay cylinder on its side along X axis
+      tyre.rotation.z = Math.PI / 2;
       tyre.castShadow = true;
       wGroup.add(tyre);
+
+      /* Sidewall highlight ring — slightly recessed from tyre face */
+      var sw = new THREE.Mesh(sidewallGeo, matSidewall);
+      sw.rotation.z = Math.PI / 2;
+      sw.position.x = outX * (_CH.WHEEL_W * 0.44);
+      wGroup.add(sw);
 
       /* Hub disc */
       var hub = new THREE.Mesh(hubGeo, _MATS.hub);
       hub.rotation.z = Math.PI / 2;
-      hub.position.x = wp.x < 0 ? -(_CH.WHEEL_W * 0.5 + 0.01)
-                                 :  (_CH.WHEEL_W * 0.5 + 0.01);
+      hub.position.x = outX * (_CH.WHEEL_W * 0.5 + 0.01);
       wGroup.add(hub);
 
-      /* Lug bolt markers — 5 tiny boxes on hub face */
-      for (var li = 0; li < 5; li++) {
-        var lugAngle = (li / 5) * Math.PI * 2;
-        var lug = _box(0.04, 0.04, 0.06, _MATS.dash);
-        lug.position.set(
-          Math.cos(lugAngle) * 0.10,
-          Math.sin(lugAngle) * 0.10,
-          wp.x < 0 ? -(_CH.WHEEL_W * 0.5 + 0.05) : (_CH.WHEEL_W * 0.5 + 0.05)
-        );
+      /* Brake rotor (inner dark disc) */
+      var rotor = new THREE.Mesh(rotorGeo, matRotor);
+      rotor.rotation.z = Math.PI / 2;
+      rotor.position.x = outX * (_CH.WHEEL_W * 0.38);
+      wGroup.add(rotor);
+
+      /* Center cap */
+      var cap = new THREE.Mesh(capGeo, matCenter);
+      cap.rotation.z = Math.PI / 2;
+      cap.position.x = outX * (_CH.WHEEL_W * 0.5 + 0.03);
+      wGroup.add(cap);
+
+      /* 6 lug bolts evenly spaced */
+      for (var li = 0; li < 6; li++) {
+        var la  = (li / 6) * Math.PI * 2;
+        var lug = new THREE.Mesh(lugGeo, matLug);
         lug.rotation.z = Math.PI / 2;
+        lug.position.set(
+          outX * (_CH.WHEEL_W * 0.5 + 0.05),
+          Math.sin(la) * 0.115,
+          Math.cos(la) * 0.115
+        );
         wGroup.add(lug);
       }
 
@@ -437,10 +834,12 @@ HE.VehicleFactory = class {
       g.add(wGroup);
     }
 
-    /* Expose named refs on the group so main.js / FPVCamera can find them */
+    /* Expose named refs — required by main.js _syncVehicleMesh() */
     g.userData.wheelGroups = wheelPositions.map(function(wp) {
       return g.getObjectByName(wp.name);
     });
+
+    g.castShadow = true;
 
     console.log('[VehicleFactory] Vehicle built — '
       + g.children.length + ' child objects.');
