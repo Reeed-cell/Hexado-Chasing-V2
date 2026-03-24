@@ -520,7 +520,10 @@ class HexadoEngine {
 
     /* ── Position + heading ── */
     this.vehicleMesh.position.copy(pos);
-    this.vehicleMesh.rotation.y = heading;
+    /* +PI: truck model's hood is at local -Z. Physics heading 0 = world +Z.
+       Without the offset the camera stares at the tailgate. Walker already
+       uses heading + PI in Characters.js _applyMeshTransform(). */
+    this.vehicleMesh.rotation.y = heading + Math.PI;
 
     /* ── Wheel spin ── */
     var speedMs        = kmh / 3.6;

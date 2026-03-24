@@ -117,9 +117,10 @@ var _CH = {
   NEEDLE_X:       0.46,   // offset right of centre on dash
 
   /* ─── Camera — FPV ───────────────────────────────────────────────────── */
-  FPV_EYE_Y:      1.15,   // eye height above vehicle Y
-  FPV_EYE_Z:      0.22,   // eye position forward of vehicle centre
-  FPV_BOB_AMP:    0.038,  // head-bob vertical amplitude
+  FPV_EYE_Y:      1.28,   // eye height above vehicle Y (was 1.15 — now at head level)
+  FPV_EYE_Z:      0.62,   // forward from centre toward windshield (was 0.22 — too shallow)
+  FPV_SEAT_X:     0.24,   // driver sits left in cab → right in world after +PI rotation
+  FPV_BOB_AMP:    0.030,  // reduced head-bob amplitude (was 0.038 — a bit much)
   FPV_BOB_FREQ:   1.55,   // head-bob frequency (Hz at max speed)
 
   /* ─── Camera — Third-person ──────────────────────────────────────────── */
@@ -895,24 +896,36 @@ HE.FPVCamera = class {
     this._bobTime += dt * bobFreq;
     var bobY       = Math.sin(this._bobTime * Math.PI * 2) * _CH.FPV_BOB_AMP;
 
-    /* ── Eye position ── (vehicle local → world) */
+    /* ── Eye position ── (vehicle local → world, accounting for +PI mesh rotation)
+       The vehicle mesh is rotated by heading + PI, so:
+         local -Z (hood)  → world +Z  (forward = sinH,cosH direction)
+         local -X (left)  → world +X  (right of vehicle = cosH direction)
+       Driver sits LEFT in the cab (local -X) = world +cosH direction.
+
+       Derivation — local driver seat at (-SEAT_X, EYE_H, -EYE_Z) transforms to:
+         world_x_offset = SEAT_X*cosH + EYE_Z*sinH
+         world_z_offset = EYE_Z*cosH  - SEAT_X*sinH               */
     var sinH = Math.sin(heading);
     var cosH = Math.cos(heading);
 
-    /* Forward offset (FPV_EYE_Z is positive = toward front of truck) */
+    var sX = _CH.FPV_SEAT_X;
+    var eZ = _CH.FPV_EYE_Z;
+
     this._eyePos.set(
-      pos.x + sinH * _CH.FPV_EYE_Z,
+      pos.x + sX * cosH + eZ * sinH,
       pos.y + _CH.FPV_EYE_Y + bobY,
-      pos.z + cosH * _CH.FPV_EYE_Z
+      pos.z + eZ * cosH  - sX * sinH
     );
 
     this._camera.position.copy(this._eyePos);
 
-    /* ── Look direction — along heading ── */
+    /* ── Look direction ──
+       Aim at a point on the road 18 units ahead, 0.5 wu above physics Y.
+       This gives a ~4° downward look — road visible, sky fills top half. */
     this._lookAt.set(
-      pos.x + sinH * 10,
-      pos.y + _CH.FPV_EYE_Y + bobY * 0.5,
-      pos.z + cosH * 10
+      pos.x + sinH * 18,
+      pos.y + 0.50,
+      pos.z + cosH * 18
     );
 
     this._camera.lookAt(this._lookAt);

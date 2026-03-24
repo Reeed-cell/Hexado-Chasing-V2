@@ -549,7 +549,7 @@ HE.Renderer = class {
           this._atmoT
         );
         /* Clouds also drop slightly as storm intensifies */
-        c.position.y = HE.MathUtils.lerp(c.userData.baseY || 80, 50, this._atmoT);
+        c.position.y = HE.MathUtils.lerp(c.userData.baseY || 100, 60, this._atmoT);
       }
     }
   }

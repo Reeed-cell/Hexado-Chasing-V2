@@ -144,14 +144,14 @@ var _ENV = {
 
   /* ─── Clouds ─────────────────────────────────────────────────────────── */
   CLOUD_COUNT:     14,
-  CLOUD_Y_MIN:     72,
-  CLOUD_Y_MAX:     95,
+  CLOUD_Y_MIN:     90,    // pushed higher — was 72, clouds were clipping into scene
+  CLOUD_Y_MAX:    120,
   CLOUD_X_RANGE:  200,
   CLOUD_Z_RANGE:  220,
-  CLOUD_PUFF_MIN:  3,     // puffs per cloud
-  CLOUD_PUFF_MAX:  7,
-  CLOUD_PUFF_R_MIN: 6,
-  CLOUD_PUFF_R_MAX: 14
+  CLOUD_PUFF_MIN:  4,     // more puffs per cloud for fluffier silhouette (was 3)
+  CLOUD_PUFF_MAX:  9,     // was 7
+  CLOUD_PUFF_R_MIN: 3,    // puffs smaller (was 6) — less golf-ball, more wispy
+  CLOUD_PUFF_R_MAX: 8     // was 14
 };
 
 
@@ -198,9 +198,9 @@ function _initMaterials() {
 
     /* Clouds — bright white */
     cloud:      new THREE.MeshLambertMaterial({
-                  color:       0xfafafa,
+                  color:       0xf0f0f0,
                   transparent: true,
-                  opacity:     0.92
+                  opacity:     0.60   // was 0.92 — near-opaque looked like golf balls
                 })
   };
 }
