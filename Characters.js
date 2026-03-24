@@ -1117,6 +1117,12 @@ HE.Walker = class {
     this._moveSpeed   = 0;    // current frame speed (for bob amplitude)
     this._bobOffset   = 0;    // current vertical bob amount
 
+    /* ── Lift / suction state ── */
+    // main.js calls applyLift() when walker enters the funnel pull zone.
+    // While _lifted = true, terrain-snap is bypassed and Y integrates upward.
+    this._liftVel  = 0;
+    this._lifted   = false;
+
     /* ── Limb refs (from walkerMesh.userData) ── */
     this._legL = walkerMesh.userData.legL || null;
     this._legR = walkerMesh.userData.legR || null;
@@ -1208,9 +1214,15 @@ HE.Walker = class {
       this._pos.z += cosH * speed * safeDt;
     }
 
-    /* ── 4. Terrain snap ── */
-    if (typeof heightFn === 'function') {
-      this._pos.y = heightFn(this._pos.x, this._pos.z);
+    /* ── 4. Terrain snap — bypassed while being sucked up ── */
+    if (this._lifted) {
+      this._pos.y += this._liftVel * safeDt;
+      this._liftVel *= Math.pow(0.986, safeDt * 60);
+    } else {
+      if (typeof heightFn === 'function') {
+        this._pos.y = heightFn(this._pos.x, this._pos.z);
+      }
+      this._liftVel = 0;
     }
 
     /* ── 5 + 6. Limb animation + body bob ── */
@@ -1279,6 +1291,27 @@ HE.Walker = class {
 
   /** Whether the walker mesh is currently active */
   get active()  { return this._mesh ? this._mesh.visible : false; }
+
+  /** True while walker is floating off the ground */
+  get lifted()  { return this._lifted; }
+
+  /* Push walker position directly (wind / suction impulse in wu/frame) */
+  applyImpulse(ix, iz) {
+    this._pos.x += ix;
+    this._pos.z += iz;
+  }
+
+  /* Trigger upward lift — vel in world units/s */
+  applyLift(vel) {
+    this._liftVel = Math.max(this._liftVel, vel);
+    if (vel > 0.1) this._lifted = true;
+  }
+
+  /* Cancel lift, return to ground mode */
+  cancelLift() {
+    this._lifted  = false;
+    this._liftVel = 0;
+  }
 
 
   /* ═══════════════════════════════════════════════════════════════════════

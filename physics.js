@@ -80,10 +80,16 @@ var _PHY = {
   VEHICLE_CLEARANCE: 0.85, // world units above ground (axle mid-height)
 
   /* ─── Wind ───────────────────────────────────────────── */
-  // Wind is blended into the XZ velocity each frame.
-  // Low intensity = gentle shudder; EF5 = genuine push.
-  WIND_BASE_SCALE: 0.06,  // multiplied by (wx or wz) — base contribution
-  WIND_INTENSITY_CURVE: 2.4, // exponent: wind only really bites above EF2
+  // Wind is blended into the XZ position each frame as a velocity (wu/s).
+  // WIND_BASE_SCALE 1.2: at EF5 / 50wu the tangential push is ~1 wu/s.
+  // Lower WIND_INTENSITY_CURVE so EF1+ already nudges the truck sideways.
+  WIND_BASE_SCALE: 1.2,       // world units/s multiplier on wind vector
+  WIND_INTENSITY_CURVE: 1.5,  // exponent — lower = bites earlier in storm
+
+  /* ─── Lift (suction) ─────────────────────────────────── */
+  // When main.js calls applyLift(), the truck rises off the ground.
+  // terrain-snap is bypassed while _lifted = true.
+  LIFT_DRAG: 0.986,  // per-frame drag on upward velocity (prevents runaway)
 
   /* ─── Event throttle ─────────────────────────────────── */
   // PLAYER_MOVE fires at most once per EMIT_INTERVAL seconds
@@ -124,6 +130,12 @@ HE.PhysicsEngine = class {
     this._windX      = 0;
     this._windZ      = 0;
     this._windIntens = 0;
+
+    /* ── Lift / suction state ── */
+    // main.js calls applyLift() when the truck is inside the funnel pull zone.
+    // While _lifted = true, terrain-snap is bypassed and Y integrates freely.
+    this._liftVel  = 0;   // current upward velocity (world units/s)
+    this._lifted   = false;
 
     /* ── Key state (public — Characters.js reads this for on-foot walk) ── */
     // Keyed by event.code so layout-independent (WASD + Arrows both work).
@@ -173,6 +185,19 @@ HE.PhysicsEngine = class {
     this._windX      = wx;
     this._windZ      = wz;
     this._windIntens = HE.MathUtils.clamp(intensity, 0, 1);
+  }
+
+
+  /* ═══════════════════════════════════════════════════════════════════════
+     applyLift(vel)
+     Called by main.js each frame when truck is inside the funnel pull zone.
+     vel > 0 = upward; the truck will float free of the ground.
+     Pass vel = 0 to cancel lift and let terrain-snap resume.
+  ═══════════════════════════════════════════════════════════════════════ */
+
+  applyLift(vel) {
+    this._liftVel = Math.max(this._liftVel, vel);   // take the strongest request
+    if (vel > 0.1) this._lifted = true;
   }
 
 
@@ -332,13 +357,27 @@ HE.PhysicsEngine = class {
     this._distDelta = Math.sqrt(dx * dx + dz * dz);
 
     /* ──────────────────────────────────────────────────────────────
-       9. TERRAIN SNAP
-       Pin the truck to the terrain surface at all times.
-       VEHICLE_CLEARANCE = 0.85 world units (axle mid-height).
+       9. TERRAIN SNAP — bypassed while truck is being lifted.
+       When lifted, integrate _liftVel upward with drag.
+       When not lifted, snap to ground as normal.
     ────────────────────────────────────────────────────────────── */
-    if (typeof heightFn === 'function') {
-      var groundY = heightFn(this._pos.x, this._pos.z);
-      this._pos.y = groundY + _PHY.VEHICLE_CLEARANCE;
+    if (this._lifted) {
+      /* Upward integration */
+      this._pos.y += this._liftVel * safeDt;
+      /* Drag bleeds off velocity so it doesn't spiral to infinity */
+      this._liftVel *= Math.pow(_PHY.LIFT_DRAG, safeDt * 60);
+
+      /* Once velocity falls below threshold AND we're still airborne,
+         keep lifted flag true — main.js controls when to stop.
+         main.js sets _lifted = false via cancelLift() on respawn.   */
+    } else {
+      /* Normal terrain attachment */
+      if (typeof heightFn === 'function') {
+        var groundY = heightFn(this._pos.x, this._pos.z);
+        this._pos.y = groundY + _PHY.VEHICLE_CLEARANCE;
+      }
+      /* Decay any residual lift velocity */
+      this._liftVel = 0;
     }
 
     /* ──────────────────────────────────────────────────────────────
@@ -377,6 +416,18 @@ HE.PhysicsEngine = class {
 
   /** Distance traveled in meters during the last update() call */
   get distDelta() { return this._distDelta; }
+
+  /** True while truck is floating off the ground due to vortex suction */
+  get lifted() { return this._lifted; }
+
+  /** Current Y position relative to ground (0 = on ground) */
+  get liftHeight() { return this._pos.y - 0.85; }
+
+  /* Cancel lift and return to ground mode — called by main.js on respawn */
+  cancelLift() {
+    this._lifted  = false;
+    this._liftVel = 0;
+  }
 
 
   /* ═══════════════════════════════════════════════════════════════════════

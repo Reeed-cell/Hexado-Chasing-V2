@@ -69,8 +69,30 @@ var _MAIN = {
   LOAD_FADE_DELAY:  700,   // ms — pause after 100% so the bar is readable before hiding
 
   /* ─── Wheel geometry ─────────────────────────────────────────────── */
-  // Must match Characters.js: WHEEL_R = 0.44 world units
-  WHEEL_RADIUS:     0.44
+  WHEEL_RADIUS:     0.44,
+
+  /* ─── Vortex suction ─────────────────────────────────────────────── */
+  // Radial inflow force (world units/s²) applied toward the tornado centre.
+  // Formula: accel = SUCK_K × intensity² / max(r, SUCK_MIN_R)
+  // This gives a gentle tug at 200wu and an overwhelming drag inside 20wu.
+  SUCK_OUTER_R:     200,   // beyond this radius, suction is zero
+  SUCK_MIN_R:       5,     // denominator floor — prevents division by zero
+  SUCK_K_VEHICLE:   14.0,  // vehicle suction strength (heavier)
+  SUCK_K_WALKER:    28.0,  // walker suction strength (lighter person)
+
+  /* ─── Vertical lift ─────────────────────────────────────────────── */
+  // Inside LIFT_RADIUS the tornado starts pulling upward.
+  // Lift vel (wu/s) = LIFT_K × intensity × (1 - r/LIFT_RADIUS)
+  LIFT_RADIUS:      22,    // world units — funnel contact zone
+  LIFT_K_VEHICLE:   9.0,   // upward velocity scalar for the truck
+  LIFT_K_WALKER:    18.0,  // upward velocity scalar for on-foot player
+
+  /* ─── Death / respawn ────────────────────────────────────────────── */
+  // Player dies when lifted more than DEATH_HEIGHT above the ground.
+  DEATH_HEIGHT:     18,    // world units above terrain → death
+  RESPAWN_POS_X:    0,
+  RESPAWN_POS_Z:    80,    // spawn south of origin, away from storm start zone
+  RESPAWN_DELAY_MS: 3000   // ms before the game resets after death
 
 };
 
@@ -120,6 +142,11 @@ class HexadoEngine {
     /* ── Loop state ── */
     this._lastTime   = 0;      // previous frame timestamp (ms)
     this._wheelAngle = 0;      // accumulated wheel rotation (radians)
+
+    /* ── Death / respawn state ── */
+    this._dead           = false;   // true while death sequence is playing
+    this._respawnTimer   = 0;       // countdown (ms) until respawn
+    this._deathOverlay   = null;    // DOM element, built lazily in _killPlayer()
 
     /* ── Cached storm data ─────────────────────────────────────────────
        STORM_UPDATE fires at 20 Hz; the loop runs at 60 Hz.
@@ -278,17 +305,104 @@ class HexadoEngine {
     /* Current player position — live Vector3 ref from the active controller */
     var playerPos = this.inVehicle ? this.physics.pos : this.walker.pos;
 
-    /* ── 3. Wind → physics ──
-       Wind forces are only applied while the storm is actually present.
-       VortexMath.worldWind() converts cylindrical vortex velocity at the
-       player's offset from tornado centre into a world-space XZ impulse.
-       physics.applyWind() buffers it; physics.update() integrates it.   */
-    if (visible && intensity > 0.01) {
-      var dx   = playerPos.x - stormPos.x;
-      var dz   = playerPos.z - stormPos.z;
-      var wind = this.vortex.worldWind(dx, dz);
-      this.physics.applyWind(wind.x, wind.z, intensity);
+    /* ── 3. Vortex forces → physics / walker ──────────────────────────────
+       Three forces act on the player when the storm is active:
+
+       A) Tangential + radial wind  — VortexMath.worldWind() gives the
+          rotating + inflow vector at the player's offset.  Scaled by the
+          existing WIND_BASE_SCALE / WIND_INTENSITY_CURVE in physics.js.
+
+       B) Suction (extra inward pull) — 1/r² gravity toward the axis,
+          applied directly to position. Felt at 200wu, dangerous at <20wu.
+
+       C) Vertical lift — inside LIFT_RADIUS the funnel starts pulling
+          the player airborne. Physics/walker terrain-snap is bypassed.
+
+       Death check: if player Y > ground + DEATH_HEIGHT → _killPlayer().
+    ────────────────────────────────────────────────────────────────────── */
+    if (visible && intensity > 0.01 && !this._dead) {
+
+      var dx2  = playerPos.x - stormPos.x;
+      var dz2  = playerPos.z - stormPos.z;
+      var r2   = Math.sqrt(dx2 * dx2 + dz2 * dz2);
+
+      /* ── A) Tangential / rotating wind ── */
+      if (r2 < _MAIN.SUCK_OUTER_R) {
+        var wind2 = this.vortex.worldWind(dx2, dz2);
+        /* Vehicle: buffer into physics.applyWind() */
+        this.physics.applyWind(wind2.x, wind2.z, intensity);
+        /* Walker: apply impulse directly to Walker pos */
+        if (!this.inVehicle && this.walker.active) {
+          var windScalar2 = Math.pow(intensity, 1.5) * 1.2 * dt;
+          this.walker.applyImpulse(wind2.x * windScalar2, wind2.z * windScalar2);
+        }
+      }
+
+      /* ── B) Radial suction (inward pull toward axis) ── */
+      if (r2 < _MAIN.SUCK_OUTER_R && r2 > 0.1) {
+        var rSafe    = Math.max(r2, _MAIN.SUCK_MIN_R);
+        /* Suction accel (wu/s²): grows with intensity², shrinks with r */
+        var iSq      = intensity * intensity;
+        var suckDt   = dt;
+
+        if (this.inVehicle) {
+          var suckA  = _MAIN.SUCK_K_VEHICLE * iSq / rSafe;
+          var suckDx = -(dx2 / r2) * suckA * suckDt;
+          var suckDz = -(dz2 / r2) * suckA * suckDt;
+          this.physics._pos.x += suckDx;
+          this.physics._pos.z += suckDz;
+        } else if (this.walker.active) {
+          var suckA  = _MAIN.SUCK_K_WALKER  * iSq / rSafe;
+          var suckDx = -(dx2 / r2) * suckA * suckDt;
+          var suckDz = -(dz2 / r2) * suckA * suckDt;
+          this.walker.applyImpulse(suckDx, suckDz);
+        }
+      }
+
+      /* ── C) Vertical lift — inside the funnel contact zone ── */
+      if (r2 < _MAIN.LIFT_RADIUS) {
+        /* Lift strength grows as player approaches the axis */
+        var liftFrac = 1.0 - (r2 / _MAIN.LIFT_RADIUS);
+        if (this.inVehicle) {
+          var liftVel = _MAIN.LIFT_K_VEHICLE * intensity * liftFrac;
+          this.physics.applyLift(liftVel);
+        } else if (this.walker.active) {
+          var liftVel = _MAIN.LIFT_K_WALKER  * intensity * liftFrac;
+          this.walker.applyLift(liftVel);
+        }
+      } else {
+        /* Outside lift zone — cancel any accumulated lift */
+        if (this.physics.lifted)              this.physics.cancelLift();
+        if (!this.inVehicle && this.walker.active && this.walker.lifted) {
+          this.walker.cancelLift();
+        }
+      }
+
+      /* ── Death check ── */
+      var groundAtPlayer = this.renderer.heightAt(playerPos.x, playerPos.z);
+      var heightAboveGround = playerPos.y - groundAtPlayer;
+      if (heightAboveGround > _MAIN.DEATH_HEIGHT) {
+        this._killPlayer();
+      }
+
+    } else if (!visible) {
+      /* Storm gone — cancel any lift so player doesn't stay airborne */
+      if (this.physics.lifted) this.physics.cancelLift();
+      if (!this.inVehicle && this.walker.active && this.walker.lifted) {
+        this.walker.cancelLift();
+      }
     }
+
+    /* ── Death freeze — skip all gameplay updates while dead ── */
+    if (this._dead) {
+      this._respawnTimer -= now - (this._lastDeathTick || now);
+      this._lastDeathTick = now;
+      if (this._respawnTimer <= 0) this._respawnPlayer();
+      /* Still render so the scene doesn't freeze visually */
+      this.renderer.update(dt, stormPos, intensity, visible);
+      return;
+    }
+    this._lastDeathTick = now;
 
     /* ── 4. Physics or walker update ──
        heightFn is HE.TerrainGen.heightAt — single source of truth for
@@ -406,9 +520,7 @@ class HexadoEngine {
 
     /* ── Position + heading ── */
     this.vehicleMesh.position.copy(pos);
-    /* +PI: vehicle model front is at -Z, but heading 0 = +Z world direction.
-       Walker.js uses the same offset (Characters.js line ~1266). */
-    this.vehicleMesh.rotation.y = heading + Math.PI;
+    this.vehicleMesh.rotation.y = heading;
 
     /* ── Wheel spin ── */
     var speedMs        = kmh / 3.6;
@@ -574,6 +686,96 @@ class HexadoEngine {
     );
 
     return dist < _MAIN.ENTER_RANGE;
+  }
+
+
+  /* ═══════════════════════════════════════════════════════════════════════
+     _killPlayer()
+     Called when the player's Y position exceeds DEATH_HEIGHT above ground.
+     Freezes gameplay, shows a death overlay, starts respawn countdown.
+  ═══════════════════════════════════════════════════════════════════════ */
+
+  _killPlayer() {
+    if (this._dead) return;   // already dying
+    this._dead = true;
+    this._respawnTimer  = _MAIN.RESPAWN_DELAY_MS;
+    this._lastDeathTick = performance.now();
+
+    /* Cancel all forces immediately so the lift doesn't keep accelerating */
+    this.physics.cancelLift();
+    if (!this.inVehicle && this.walker.active) this.walker.cancelLift();
+
+    /* Build overlay lazily (only once) */
+    if (!this._deathOverlay) {
+      var ov = document.createElement('div');
+      ov.id = 'death-overlay';
+      ov.style.cssText = [
+        'position:fixed', 'inset:0', 'z-index:100',
+        'display:flex', 'flex-direction:column',
+        'align-items:center', 'justify-content:center',
+        'background:rgba(10,0,0,0.72)',
+        'font-family:Courier New,monospace',
+        'transition:opacity 0.4s ease',
+        'pointer-events:none'
+      ].join(';');
+      ov.innerHTML = [
+        '<div style="color:#ff2222;font-size:44px;font-weight:bold;',
+        'letter-spacing:10px;text-transform:uppercase;',
+        'text-shadow:0 0 30px #ff2222;margin-bottom:18px">',
+        '\u2620 CONSUMED</div>',
+        '<div style="color:rgba(255,200,40,0.75);font-size:11px;',
+        'letter-spacing:4px;text-transform:uppercase">',
+        'The vortex claimed you &mdash; respawning&hellip;</div>'
+      ].join('');
+      document.body.appendChild(ov);
+      this._deathOverlay = ov;
+    }
+
+    this._deathOverlay.style.opacity = '1';
+    this._deathOverlay.style.display = 'flex';
+
+    console.log('[HexadoEngine] Player consumed by tornado — respawning in '
+      + (_MAIN.RESPAWN_DELAY_MS / 1000).toFixed(1) + 's');
+  }
+
+
+  /* ═══════════════════════════════════════════════════════════════════════
+     _respawnPlayer()
+     Resets player state to the spawn position and resumes gameplay.
+  ═══════════════════════════════════════════════════════════════════════ */
+
+  _respawnPlayer() {
+    this._dead = false;
+
+    /* ── Reset vehicle physics ── */
+    var spawnX = _MAIN.RESPAWN_POS_X;
+    var spawnZ = _MAIN.RESPAWN_POS_Z;
+    var spawnY = this.renderer.heightAt(spawnX, spawnZ) + 0.85;
+
+    this.physics._pos.set(spawnX, spawnY, spawnZ);
+    this.physics._speed   = 0;
+    this.physics._heading = 0;
+    this.physics.cancelLift();
+
+    /* ── If on foot, also reset walker and force back into vehicle ── */
+    if (!this.inVehicle) {
+      this.walker.deactivate();
+      this.inVehicle = true;
+      this.driverMesh.visible = true;
+      this.bus.emit('ENTER_VEHICLE', {});
+    }
+
+    /* ── Snap camera so it doesn't lerp from the old death position ── */
+    this.fpvCam.update(0.016, this.physics);
+
+    /* ── Fade overlay out ── */
+    if (this._deathOverlay) {
+      this._deathOverlay.style.opacity = '0';
+      var ov = this._deathOverlay;
+      setTimeout(function() { ov.style.display = 'none'; }, 420);
+    }
+
+    console.log('[HexadoEngine] Respawned at (' + spawnX + ', ' + spawnZ + ')');
   }
 
 
